@@ -10,14 +10,16 @@ const FirebaseContext = createContext(null);
 const useFirebase = () => useContext(FirebaseContext);
 
 // 2. Utility Function: Generate a short, unique 5-letter game code
+// List of common 5-letter English words for game codes
+const FIVE_LETTER_WORDS = [
+  "APPLE", "BRAVE", "CHAIR", "DREAM", "EAGLE", "FIGHT", "GRAPE", "HOUSE", "IDEAL", "JUMPY",
+  "KITES", "LIGHT", "MOUTH", "NIGHT", "OCEAN", "PLANT", "QUICK", "ROBOT", "SHARP", "TIGER",
+  "UNITY", "VOICE", "WATER", "XENON", "YACHT", "ZEBRA", "BLAST", "CRANE", "FLAME", "GLORY"
+];
+
 const generateGameCode = () => {
-  let result = '';
-  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-  const charactersLength = characters.length;
-  for (let i = 0; i < 5; i++) {
-    result += characters.charAt(Math.floor(Math.random() * charactersLength));
-  }
-  return result;
+  const randomIndex = Math.floor(Math.random() * FIVE_LETTER_WORDS.length);
+  return FIVE_LETTER_WORDS[randomIndex];
 };
 
 // 3. Reusable UI Component: Confirmation Modal (instead of alert/confirm)
@@ -320,7 +322,7 @@ const App = () => {
         const gameSnap = await getDoc(gameRef);
         if (gameSnap.exists()) {
           console.warn("Generated duplicate game code, trying again.");
-          setErrorMessage("Failed to create game, please try again.");
+          setErrorMessage("Failed to create game, please try again. Game code already exists, try creating another.");
           return;
         }
 
@@ -448,7 +450,7 @@ const App = () => {
         />
         <input
           type="text"
-          placeholder="Game Code (e.g., ABCDE)"
+          placeholder="Game Code (e.g., APPLE)"
           value={code}
           onChange={(e) => setCode(e.target.value.toUpperCase())}
           className="w-full p-3 mb-4 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -564,7 +566,8 @@ const App = () => {
                 player2Id: m.player2.id,
                 winnerId: null, // Initial state
                 status: 'active'
-            }))
+            })),
+            byePlayers: byePlayers.map(p => ({ id: p.id, name: p.name })), // Store explicit bye players for reference in round 1
         });
 
         await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), {
@@ -573,7 +576,7 @@ const App = () => {
           players: allPlayersUpdated, // Update players with their initial status (playing or bye)
           matches: [], // Clear top-level matches, will use bracket structure
           bracket: bracket, // Store the bracket structure
-          byePlayers: byePlayers.map(p => ({ id: p.id, name: p.name })), // Store explicit bye players for reference
+          // byePlayers: byePlayers.map(p => ({ id: p.id, name: p.name })), // No longer top-level, now per round in bracket
         });
         setMessage('');
         console.log("Game started! Initial bracket and matches created.");
@@ -1123,7 +1126,7 @@ const App = () => {
             const winnerName = fullMatch?.winnerId ? getPlayerNameById(fullMatch.winnerId) : 'N/A';
 
             return (
-                <div key={match.id} className={`flex flex-col items-center p-2 rounded-md shadow-md text-sm transition duration-300 ${statusClass} ${isUserMatch ? 'ring-2 ring-yellow-400' : ''}`}>
+                <div key={match.id} className={`flex flex-col items-center p-2 rounded-md shadow-md text-sm transition duration-300 text-white ${statusClass} ${isUserMatch ? 'ring-2 ring-yellow-400' : ''}`}>
                     <div className="font-bold">{player1Name}</div>
                     <div className="text-xs">vs</div>
                     <div className="font-bold">{player2Name}</div>
@@ -1140,7 +1143,7 @@ const App = () => {
             const playerName = getPlayerNameById(byePlayer.id);
             const isUserBye = byePlayer.id === userId;
             return (
-                <div key={byePlayer.id} className={`flex flex-col items-center p-2 rounded-md shadow-md text-sm bg-blue-600 transition duration-300 ${isUserBye ? 'ring-2 ring-yellow-400' : ''}`}>
+                <div key={byePlayer.id} className={`flex flex-col items-center p-2 rounded-md shadow-md text-sm bg-blue-600 transition duration-300 text-white ${isUserBye ? 'ring-2 ring-yellow-400' : ''}`}>
                     <div className="font-bold">{playerName}</div>
                     <div className="text-xs text-white">Gets a Bye!</div>
                 </div>
@@ -1168,43 +1171,6 @@ const App = () => {
         <h2 className="text-4xl font-extrabold text-gray-900 mb-2">Tournament</h2>
         <p className="text-xl text-indigo-600 mb-6">Round: {game.currentRound}</p>
         <p className="text-lg text-gray-700 mb-4">You are: <span className="font-semibold text-xl">{displayName || 'Anonymous'}</span> (ID: <span className="text-sm font-mono text-gray-500">{userId}</span>)</p>
-
-        {/* This modal is handled at the App component level, not here directly */}
-        {/*
-        {game.status === 'finished' && (
-          <div className="absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
-            <div className="bg-white p-8 rounded-lg shadow-2xl text-center animate-bounce-in">
-              <h3 className="text-5xl font-extrabold text-yellow-500 mb-4">🏆 Tournament Ended! 🏆</h3>
-              {finalWinner ? (
-                <p className="text-4xl font-bold text-green-700 mb-6">{finalWinner.name} is the Champion!</p>
-              ) : (
-                <p className="text-4xl font-bold text-gray-700 mb-6">No clear winner (e.g., game reset or all left).</p>
-              )}
-
-              {isHost && (
-                <button
-                  onClick={handleEndGameInitiate}
-                  className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition duration-300"
-                >
-                  End Game Completely
-                </button>
-              )}
-              {!isHost && (
-                <button
-                  onClick={() => {
-                    setCurrentGameId(null);
-                    setGame(null);
-                    setCurrentPage('home');
-                  }}
-                  className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition duration-300"
-                >
-                  Go Home
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-        */}
 
         {currentMatch ? (
           <div className="bg-gradient-to-br from-indigo-500 to-purple-600 text-white p-6 rounded-xl shadow-lg w-full max-w-md mb-6 transform hover:scale-105 transition duration-300">
