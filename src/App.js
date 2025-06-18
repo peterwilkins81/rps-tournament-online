@@ -61,21 +61,29 @@ const App = () => {
   const [game, setGame] = useState(null); // Current game data from Firestore
 
   // Firebase Initialization and Authentication
+  // Firebase Initialization and Authentication
   useEffect(() => {
     try {
+      // *** IMPORTANT: REPLACE THESE PLACEHOLDERS WITH YOUR ACTUAL FIREBASE CONFIG ***
       const firebaseConfig = {
-  apiKey: "AIzaSyBni6_iiti4MytyRpfTh95SyC1LhyV9KF0",
-  authDomain: "rps-tournament-online.firebaseapp.com",
-  projectId: "rps-tournament-online",
-  storageBucket: "rps-tournament-online.firebasestorage.app",
-  messagingSenderId: "453163680831",
-  appId: "1:453163680831:web:cb66974cb075122d5fe48a"
-};
-setAppId(actualFirebaseConfig.appId);
-      if (!firebaseConfig || Object.keys(firebaseConfig).length === 0) {
-        console.error("Firebase config is missing or empty. Please ensure __firebase_config is set.");
-        return;
+        apiKey: "AIzaSyBni6_iiti4MytyRpfTh95SyC1LhyV9KF0",
+        authDomain: "rps-tournament-online.firebaseapp.com",
+        projectId: "rps-tournament-online",
+        storageBucket: "rps-tournament-online.firebasestorage.app",
+        messagingSenderId: "453163680831",
+        appId: "1:453163680831:web:cb66974cb075122d5fe48a" // This is your web app's App ID from Firebase Console
+        // If you had measurementId, include it here: measurementId: "G-..."
+      };
+      // *** END OF FIREBASE CONFIGURATION ***
+
+            // Ensure firebaseConfig is valid before proceeding
+      if (!firebaseConfig || Object.keys(firebaseConfig).length === 0 || !firebaseConfig.projectId) {
+        console.error("Firebase config is missing or invalid. Please check your App.js file.");
+        return; // Exit early if config is bad
       }
+
+      // Set the appId state variable from the firebaseConfig
+      setAppId(firebaseConfig.appId);
 
       const app = initializeApp(firebaseConfig);
       const firestore = getFirestore(app);
@@ -92,11 +100,9 @@ setAppId(actualFirebaseConfig.appId);
         } else {
           console.log("Firebase Auth State Changed: No user, signing in anonymously.");
           try {
-            // The __initial_auth_token is specific to the Canvas environment.
-            // For a live website, we'll primarily use anonymous sign-in or other auth methods.
+            // For a live website, we'll generally sign in anonymously
             await signInAnonymously(firebaseAuth);
-          } 
-          catch (error) {
+          } catch (error) {
             console.error("Error signing in anonymously:", error);
           }
         }
@@ -106,7 +112,7 @@ setAppId(actualFirebaseConfig.appId);
     } catch (error) {
       console.error("Error initializing Firebase:", error);
     }
-  }, []);
+  }, []); // Empty dependency array means this runs once on component mount
 
   // Effect to listen to game data when currentGameId changes
   useEffect(() => {
