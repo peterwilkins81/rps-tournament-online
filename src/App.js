@@ -1,59 +1,85 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, serverTimestamp, deleteDoc } from 'firebase/firestore'; // Added deleteDoc here
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, where, addDoc, deleteDoc, getDocs } from 'firebase/firestore';
 
-// Define a context to make Firebase and user data easily accessible throughout the app
+// Context for Firebase services and user data
 const FirebaseContext = createContext(null);
+
+// Custom hook to use Firebase context
+const useFirebase = () => useContext(FirebaseContext);
+
+// Utility to generate a short, unique game code
+const generateGameCode = () => {
+  return Math.random().toString(36).substring(2, 8).toUpperCase();
+};
+
+// Custom Confirmation Modal Component
+const ConfirmationModal = ({ show, title, message, onConfirm, onCancel }) => {
+  if (!show) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+      <div className="bg-white p-6 rounded-lg shadow-2xl max-w-sm w-full text-center">
+        <h3 className="text-xl font-bold text-gray-800 mb-4">{title}</h3>
+        <p className="text-gray-700 mb-6">{message}</p>
+        <div className="flex justify-around space-x-4">
+          <button
+            onClick={onCancel}
+            className="flex-1 p-3 rounded-md font-semibold transition duration-300 bg-gray-300 hover:bg-gray-400 text-gray-800 shadow-md"
+          >
+            No, Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 p-3 rounded-md font-semibold transition duration-300 bg-red-600 hover:bg-red-700 text-white shadow-md"
+          >
+            Yes, Proceed
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 
 // Main App Component
 const App = () => {
-  // State variables for Firebase instances and user data
   const [db, setDb] = useState(null);
   const [auth, setAuth] = useState(null);
   const [userId, setUserId] = useState(null);
-  const [displayName, setDisplayName] = useState(''); // This state will now be updated
+  const [displayName, setDisplayName] = useState('');
   const [isAuthReady, setIsAuthReady] = useState(false);
-  const [appId, setAppId] = useState(null); // Stores the Firebase App ID
-
-  // Game-specific state variables
-  const [currentGameId, setCurrentGameId] = useState(null); // ID of the currently joined game
+  const [currentPage, setCurrentPage] = useState('home'); // 'home', 'createGame', 'joinGame', 'gameLobby', 'tournament'
+  const [currentGameId, setCurrentGameId] = useState(null);
   const [game, setGame] = useState(null); // Current game data from Firestore
-  const [currentPage, setCurrentPage] = useState('home'); // Controls which view is shown (home, create, join, game)
 
-  // --- Firebase Initialization and Authentication ---
-  // This useEffect runs once on component mount to initialize Firebase and handle initial authentication.
+  // Firebase Initialization and Authentication
   useEffect(() => {
     try {
+      const appId = "1:453163680831:web:cb66974cb075122d5fe48a"; // Directly setting the provided appId
       const firebaseConfig = {
         apiKey: "AIzaSyBni6_iiti4MytyRpfTh95SyC1LhyV9KF0",
         authDomain: "rps-tournament-online.firebaseapp.com",
         projectId: "rps-tournament-online",
         storageBucket: "rps-tournament-online.firebasestorage.app",
         messagingSenderId: "453163680831",
-        appId: "1:453163680831:web:cb66974cb075122d5fe48a"
+        appId: appId // Using the variable
       };
 
-      // Ensure firebaseConfig is valid before proceeding
       if (!firebaseConfig || Object.keys(firebaseConfig).length === 0 || !firebaseConfig.projectId || !firebaseConfig.apiKey) {
-        console.error("Firebase config is missing or invalid. Please ensure all placeholders in App.js are replaced with your actual Firebase project details.");
-        return; // Exit early if config is bad
+        console.error("Firebase config is missing or empty. Please ensure all Firebase credentials are correct.");
+        return;
       }
 
-      // Set the appId state variable from the firebaseConfig
-      setAppId(firebaseConfig.appId);
-
-      // Initialize Firebase app and services
       const app = initializeApp(firebaseConfig);
       const firestore = getFirestore(app);
       const firebaseAuth = getAuth(app);
 
-      // Store initialized services in state
       setDb(firestore);
       setAuth(firebaseAuth);
 
-      // Listen for authentication state changes (login/logout)
-      const unsubscribeAuth = onAuthStateChanged(firebaseAuth, async (user) => {
+      const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
         if (user) {
           console.log("Firebase Auth State Changed: Logged in as", user.uid);
           setUserId(user.uid);
@@ -61,844 +87,1013 @@ const App = () => {
         } else {
           console.log("Firebase Auth State Changed: No user, signing in anonymously.");
           try {
-            // Sign in anonymously if no user is found. This is common for simple, public apps.
-            await signInAnonymously(firebaseAuth);
+            // Use __initial_auth_token if available (from Canvas environment), otherwise sign in anonymously
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+              await signInWithCustomToken(firebaseAuth, __initial_auth_token);
+            } else {
+              await signInAnonymously(firebaseAuth);
+            }
           } catch (error) {
             console.error("Error signing in anonymously:", error);
           }
         }
       });
 
-      // Cleanup function: unsubscribe from auth listener when component unmounts
-      return () => unsubscribeAuth();
+      return () => unsubscribe();
     } catch (error) {
       console.error("Error initializing Firebase:", error);
     }
-  }, []); // Empty dependency array ensures this useEffect runs only once on mount
+  }, []);
 
-  // --- Firestore Game Data Listener ---
-  // This useEffect sets up a real-time listener for the current game's data from Firestore.
-  // It updates the 'game' state whenever the Firestore document changes.
+  // Effect to listen to game data when currentGameId changes
   useEffect(() => {
-    // Only proceed if Firebase is ready, a game is selected, and database is available
-    if (!db || !currentGameId || !appId || !isAuthReady) {
-      return;
-    }
-
-    // Construct the Firestore document reference for the current game
-    const gameDocRef = doc(db, `artifacts/${appId}/public/data/games`, currentGameId);
-
-    // Set up real-time listener using onSnapshot
-    const unsubscribeSnapshot = onSnapshot(gameDocRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const gameData = docSnap.data();
-        setGame(gameData); // Update the game state with the latest data
-        console.log("Game data updated:", gameData);
-
-        // If game status becomes 'ended', navigate to the home page after a short delay
-        if (gameData.status === 'ended') {
-          setTimeout(() => {
-            setCurrentGameId(null);
-            setCurrentPage('gameEnded'); // Or 'home' if you prefer to go straight back
-          }, 3000); // Give user time to see final scores/winner
-        }
-
-      } else {
-        console.log("No such game document!");
-        setGame(null); // Clear game state if document doesn't exist
-        setCurrentGameId(null); // Clear current game ID
-        setCurrentPage('home'); // Go back to home page
-      }
-    }, (error) => {
-      console.error("Error listening to game document:", error);
-      // Handle permission errors more gracefully here if needed
-      if (error.code === 'permission-denied') {
-        alert("You do not have permission to access this game. It might have been deleted or the game code is incorrect.");
-        setCurrentGameId(null);
-        setCurrentPage('home');
-      }
-    });
-
-    // Cleanup function: unsubscribe from snapshot listener when component unmounts or dependencies change
-    return () => unsubscribeSnapshot();
-  }, [db, currentGameId, appId, isAuthReady]); // Dependencies: Re-run when these change
-
-  // --- Round Resolution Logic ---
-  // This useEffect watches the 'game' state for changes and resolves rounds when all players have moved.
-  useEffect(() => {
-    // Only proceed if Firebase is ready, a game is selected, game is started, and game data exists
-    if (!db || !currentGameId || !game || game.status !== 'started' || !appId) {
-      return;
-    }
-
-    const resolveRound = async () => {
-      const gameDocRef = doc(db, `artifacts/${appId}/public/data/games`, currentGameId);
-      // Create a mutable copy of players from the current game state
-      const players = { ...game.players };
-
-      // Identify active player IDs (players who have a name)
-      const playerIds = Object.keys(players).filter(id => players[id].name);
-
-      // Check if all active players have made a pending choice
-      // Ensure all players are accounted for before proceeding
-      const allPlayersChosen = playerIds.length === 2 && playerIds.every(id => players[id] && players[id].pendingChoice);
-
-
-      // Only proceed if all players have made a pending choice
-      if (allPlayersChosen) {
-        console.log("All players have made their choices. Resolving round...");
-
-        // Assign player 1 and player 2 based on the order of playerIds
-        // Assuming 2 players for a standard game
-        let p1Id = playerIds[0];
-        let p2Id = playerIds[1];
-
-        let p1Choice = players[p1Id]?.pendingChoice;
-        let p2Choice = players[p2Id]?.pendingChoice;
-
-        let roundWinnerId = null;
-        let newScores = { ...game.scores }; // Copy current scores
-        let newHistory = [...(game.history || [])]; // Copy current history
-
-        // Only determine winner if both choices are present
-        if (p1Choice && p2Choice) {
-          const result = determineWinner(p1Choice, p2Choice); // Use the helper function
-
-          if (result === 'player1') {
-            roundWinnerId = p1Id;
-            newScores[p1Id] = (newScores[p1Id] || 0) + 1; // Increment p1's score
-            console.log(`${players[p1Id].name} wins the round!`);
-          } else if (result === 'player2') {
-            roundWinnerId = p2Id;
-            newScores[p2Id] = (newScores[p2Id] || 0) + 1; // Increment p2's score
-            console.log(`${players[p2Id].name} wins the round!`);
-          } else {
-            console.log("It's a tie!");
+    if (db && currentGameId) {
+      // Access __app_id from the global scope if defined, otherwise use a default or your hardcoded ID
+      const currentAppId = typeof __app_id !== 'undefined' ? __app_id : "1:453163680831:web:cb66974cb075122d5fe48a"; // Fallback to your provided ID if __app_id isn't in scope
+      const gameDocRef = doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId);
+      const unsubscribe = onSnapshot(gameDocRef, (docSnap) => {
+        if (docSnap.exists()) {
+          setGame(docSnap.data());
+          console.log("Current Game Data:", docSnap.data());
+          // Automatically navigate based on game state
+          if (docSnap.data().status === 'lobby') {
+            setCurrentPage('gameLobby');
+          } else if (docSnap.data().status === 'playing' || docSnap.data().status === 'finished') {
+            setCurrentPage('tournament');
           }
-
-          // Reveal choices by moving from pendingChoice to choice, and clear pendingChoice
-          players[p1Id].choice = p1Choice;
-          players[p2Id].choice = p2Choice;
-          players[p1Id].pendingChoice = null;
-          players[p2Id].pendingChoice = null;
-
-          // Record this round's details in the game history
-          newHistory.push({
-            round: game.currentRound,
-            players: {
-              [p1Id]: { name: players[p1Id].name, choice: p1Choice },
-              [p2Id]: { name: players[p2Id].name, choice: p2Choice }
-            },
-            winner: roundWinnerId ? players[roundWinnerId].name : 'Tie',
-            scores: { ...newScores } // Record scores at the end of this round
-          });
-
         } else {
-          console.warn("One or more players did not make a choice for this round. Not resolving.");
-          return; // Don't proceed with resolving if choices are missing
+          console.log("Game does not exist or has been deleted.");
+          setGame(null);
+          setCurrentGameId(null);
+          setCurrentPage('home'); // Go back to home if game is deleted
         }
-
-        let newCurrentRound = game.currentRound + 1;
-        let newStatus = game.status;
-        let finalWinnerId = null; // To store the tournament winner
-
-        // Check if the game has reached its total number of rounds
-        if (newCurrentRound > game.rounds) {
-          newStatus = 'ended';
-          // Logic to determine the overall tournament winner
-          const finalScores = newScores;
-          const scoresArray = Object.entries(finalScores).sort(([, scoreA], [, scoreB]) => scoreB - scoreA); // Sort players by score
-
-          if (scoresArray.length > 0 && scoresArray[0][1] > (scoresArray[1]?.[1] || -1)) {
-            finalWinnerId = scoresArray[0][0]; // Player with the uniquely highest score
-          } else if (scoresArray.length > 1 && scoresArray[0][1] === scoresArray[1][1]) {
-              finalWinnerId = 'Tie'; // Top scores are equal, so it's a tie
-          }
-          console.log("Game has ended. Final winner:", finalWinnerId ? players[finalWinnerId].name : "None");
+      }, (error) => {
+        console.error("Error listening to game changes:", error);
+        // Handle permission errors, e.g., game deleted
+        if (error.code === 'permission-denied') {
+          alert("You do not have permission to access this game. It might have been deleted or the game code is incorrect.");
+          setCurrentGameId(null);
+          setGame(null);
+          setCurrentPage('home');
         }
-
-        try {
-          // Update the Firestore document with the new game state
-          await updateDoc(gameDocRef, {
-            players: players, // Updated players with revealed choices and cleared pending moves
-            scores: newScores,
-            history: newHistory,
-            currentRound: newCurrentRound,
-            status: newStatus,
-            winner: finalWinnerId, // Set the overall game winner if applicable
-            lastUpdated: serverTimestamp(),
-          });
-
-          console.log(`Round ${game.currentRound} resolved. Next round: ${newCurrentRound}`);
-
-        } catch (error) {
-          console.error("Error resolving round:", error);
-        }
-      }
-    };
-
-    // Helper to determine round winner based on Rock, Paper, Scissors rules
-    const determineWinner = (choice1, choice2) => {
-      if (choice1 === choice2) return 'tie'; // If choices are the same, it's a tie
-      if (
-        (choice1 === 'rock' && choice2 === 'scissors') || // Rock beats Scissors
-        (choice1 === 'paper' && choice2 === 'rock') ||    // Paper beats Rock
-        (choice1 === 'scissors' && choice2 === 'paper')   // Scissors beats Paper
-      ) {
-        return 'player1'; // First player wins
-      }
-      return 'player2'; // Second player wins
-    };
-
-    // Trigger resolveRound if the game object has players and pending choices are made
-    // This will run when 'game' object updates from Firebase
-    if (Object.keys(game.players || {}).length > 0 && Object.values(game.players).some(p => p.pendingChoice)) {
-       resolveRound();
-    }
-
-  }, [game, db, currentGameId, userId, appId]); // Dependencies: Re-run when these values change
-
-  // --- Helper Functions ---
-
-  // Generates a unique 6-character alphanumeric game code
-  const generateGameCode = () => {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
-  };
-
-  // Handles creating a new game
-  // Now accepts 'name' as a parameter to set displayName in App's state
-  const createGame = async (gameName, rounds, name) => {
-    if (!db || !userId || !appId) { // Removed !displayName from this check, as it's passed here
-      console.error("Firebase DB, User ID, or App ID not available.");
-      return;
-    }
-    // Set the global displayName state BEFORE creating the game
-    setDisplayName(name);
-
-    const gameCode = generateGameCode();
-    const newGameRef = doc(db, `artifacts/${appId}/public/data/games`, gameCode);
-
-    try {
-      await setDoc(newGameRef, {
-        name: gameName,
-        rounds: parseInt(rounds, 10), // Ensure rounds is a number
-        currentRound: 1,
-        status: 'waiting', // waiting, started, ended
-        players: {
-          [userId]: { name: name, score: 0, host: true, choice: null, pendingChoice: null }
-        },
-        scores: {
-          [userId]: 0
-        },
-        history: [], // Stores round-by-round results
-        createdAt: serverTimestamp(),
-        lastUpdated: serverTimestamp(),
       });
-      setCurrentGameId(gameCode);
-      setCurrentPage('lobby');
-      console.log("Game created with code:", gameCode);
-    } catch (error) {
-      console.error("Error creating game:", error);
-      alert("Failed to create game: " + error.message);
+
+      return () => unsubscribe();
     }
+  }, [db, currentGameId]);
+
+  // Component for the Home page
+  const Home = () => {
+    // We get userId from the context, which is provided higher up in the App component.
+    const { userId } = useFirebase();
+    return (
+      <div className="flex flex-col items-center justify-center p-6 bg-white rounded-lg shadow-xl m-4 md:w-1/2 lg:w-1/3 mx-auto">
+        <h2 className="text-4xl font-bold text-gray-800 mb-6">Rock, Paper, Scissors Tournament</h2>
+        <p className="text-lg text-gray-600 mb-8 text-center">Challenge your friends to an epic tournament!</p>
+        <button
+          onClick={() => setCurrentPage('createGame')}
+          className="w-full p-4 mb-4 rounded-md text-xl font-bold transition duration-300 bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg"
+        >
+          Create New Game
+        </button>
+        <button
+          onClick={() => setCurrentPage('joinGame')}
+          className="w-full p-4 rounded-md text-xl font-bold transition duration-300 bg-green-600 hover:bg-green-700 text-white shadow-lg"
+        >
+          Join Existing Game
+        </button>
+        <p className="mt-6 text-sm text-gray-500">Your Session ID: <span className="font-mono">{userId || 'Loading...'}</span></p>
+      </div>
+    );
   };
 
-  // Handles joining an existing game
-  // Now accepts 'name' as a parameter to set displayName in App's state
-  const joinGame = async (gameCode, name) => {
-    if (!db || !userId || !appId) { // Removed !displayName from this check
-      console.error("Firebase DB, User ID, or App ID not available.");
-      return;
-    }
-    // Set the global displayName state BEFORE joining the game
-    setDisplayName(name);
 
-    const gameDocRef = doc(db, `artifacts/${appId}/public/data/games`, gameCode);
+  // Component to handle creating a new game
+  const CreateGame = () => {
+    // Destructure necessary values from the Firebase context
+    const { db, userId, isAuthReady, setDisplayName, setCurrentGameId, setCurrentPage } = useFirebase();
+    const [name, setName] = useState('');
+    const [creating, setCreating] = useState(false);
+    const [errorMessage, setErrorMessage] = useState('');
+    const currentAppId = typeof __app_id !== 'undefined' ? __app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
 
-    try {
-      const docSnap = await getDoc(gameDocRef);
-      if (docSnap.exists()) {
-        const gameData = docSnap.data();
-        // Check if game is full (for two players)
-        if (Object.keys(gameData.players).length >= 2 && !gameData.players[userId]) {
-            alert("Game is full! Maximum 2 players allowed.");
+    const handleCreateGame = async () => {
+      if (!name.trim()) {
+        setErrorMessage('Please enter your name.');
+        return;
+      }
+      if (!isAuthReady || !userId) {
+        setErrorMessage('Authentication not ready. Please wait.');
+        return;
+      }
+
+      setCreating(true);
+      setErrorMessage('');
+      try {
+        const newGameCode = generateGameCode();
+        const gameRef = doc(db, `artifacts/${currentAppId}/public/data/games`, newGameCode);
+
+        // Check if game code already exists (unlikely but possible)
+        const gameSnap = await getDoc(gameRef);
+        if (gameSnap.exists()) {
+          // If it exists, try again or generate a new code. For now, just log and return.
+          console.warn("Generated duplicate game code, trying again.");
+          setErrorMessage("Failed to create game, please try again.");
+          setCreating(false);
+          return;
+        }
+
+        const initialGameData = {
+          hostId: userId,
+          players: [{ id: userId, name: name.trim(), status: 'joined', wins: 0, losses: 0, advancedThisRound: false }],
+          currentRound: 0, // 0 for lobby, 1 for first round of play
+          status: 'lobby', // 'lobby', 'playing', 'finished'
+          createdAt: Date.now(),
+        };
+
+        await setDoc(gameRef, initialGameData);
+        setCurrentGameId(newGameCode);
+        setCurrentPage('gameLobby');
+        setDisplayName(name.trim()); // Set display name globally
+        console.log(`Game created with code: ${newGameCode}`);
+      } catch (error) {
+        console.error("Error creating game:", error);
+        setErrorMessage("Failed to create game. Please try again.");
+      } finally {
+        setCreating(false);
+      }
+    };
+
+    return (
+      <div className="flex flex-col items-center justify-center p-6 bg-white rounded-lg shadow-xl m-4 md:w-1/2 lg:w-1/3 mx-auto">
+        <h2 className="text-3xl font-bold text-gray-800 mb-6">Create New Game</h2>
+        <input
+          type="text"
+          placeholder="Your Name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="w-full p-3 mb-4 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        />
+        <button
+          onClick={handleCreateGame}
+          disabled={creating || !isAuthReady}
+          className={`w-full p-3 rounded-md text-lg font-semibold transition duration-300 ${
+            creating || !isAuthReady ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-md'
+          }`}
+        >
+          {creating ? 'Creating...' : 'Create Game'}
+        </button>
+        {errorMessage && <p className="text-red-500 mt-4 text-sm">{errorMessage}</p>}
+        <button
+          onClick={() => setCurrentPage('home')}
+          className="mt-4 text-indigo-600 hover:underline text-sm"
+        >
+          Back to Home
+        </button>
+      </div>
+    );
+  };
+
+  // Component to handle joining an existing game
+  const JoinGame = () => {
+    // Destructure necessary values from the Firebase context
+    const { db, userId, isAuthReady, setDisplayName, setCurrentGameId, setCurrentPage } = useFirebase();
+    const [code, setCode] = useState('');
+    const [name, setName] = useState('');
+    const [joining, setJoining] = useState(false);
+    const [errorMessage, setErrorMessage] = useState('');
+    const currentAppId = typeof __app_id !== 'undefined' ? __app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
+
+
+    const handleJoinGame = async () => {
+      if (!name.trim()) {
+        setErrorMessage('Please enter your name.');
+        return;
+      }
+      if (!code.trim()) {
+        setErrorMessage('Please enter a game code.');
+        return;
+      }
+      if (!isAuthReady || !userId) {
+        setErrorMessage('Authentication not ready. Please wait.');
+        return;
+      }
+
+      setJoining(true);
+      setErrorMessage('');
+      try {
+        const gameDocRef = doc(db, `artifacts/${currentAppId}/public/data/games`, code.trim().toUpperCase());
+        const gameSnap = await getDoc(gameDocRef);
+
+        if (!gameSnap.exists()) {
+          setErrorMessage('Game not found. Please check the code.');
+          return;
+        }
+
+        const gameData = gameSnap.data();
+        // Check if player already exists in the game
+        const playerExists = gameData.players.some(player => player.id === userId);
+
+        if (!playerExists) {
+          // Check if game is full (max 2 players for simplicity in RPS matches)
+          if (gameData.players.length >= 2) {
+            setErrorMessage('Game is full. Cannot join.');
             return;
-        }
-
-        if (!gameData.players[userId]) {
-          // Add player to existing game
-          const updatedPlayers = {
-            ...gameData.players,
-            [userId]: { name: name, score: 0, host: false, choice: null, pendingChoice: null }
-          };
-          const updatedScores = {
-            ...gameData.scores,
-            [userId]: 0
-          };
-
-          await updateDoc(gameDocRef, {
-            players: updatedPlayers,
-            scores: updatedScores,
-            lastUpdated: serverTimestamp(),
-          });
-          setCurrentGameId(gameCode);
-          setCurrentPage('lobby');
-          console.log("Joined game:", gameCode);
+          }
+          const updatedPlayers = [...gameData.players, { id: userId, name: name.trim(), status: 'joined', wins: 0, losses: 0, advancedThisRound: false }];
+          await updateDoc(gameDocRef, { players: updatedPlayers });
         } else {
-          // Player is already in the game, update their name if it changed
-          const updatedPlayers = { ...gameData.players };
-          updatedPlayers[userId] = { ...updatedPlayers[userId], name: name };
-          await updateDoc(gameDocRef, {
-            players: updatedPlayers,
-            lastUpdated: serverTimestamp(),
-          });
-          setCurrentGameId(gameCode);
-          setCurrentPage('lobby'); // Or direct to game if started
-          console.log("Already in game, name updated:", gameCode);
+          // If player exists but name might be different, update it
+          const updatedPlayers = gameData.players.map(player =>
+            player.id === userId ? { ...player, name: name.trim() } : player
+          );
+          await updateDoc(gameDocRef, { players: updatedPlayers });
         }
-      } else {
-        alert("Game not found!");
-      }
-    } catch (error) {
-      console.error("Error joining game:", error);
-      alert("Failed to join game: " + error.message);
-    }
-  };
 
-
-  // Handles starting the game (only host can do this)
-  const handleStartGame = async () => {
-    if (!db || !currentGameId || !userId || !game || game.players[userId]?.host !== true) {
-      console.warn("Cannot start game: Not host or game not ready.");
-      return;
-    }
-    if (Object.keys(game.players).length < 2) {
-        alert("Need at least 2 players to start the game.");
-        return;
-    }
-
-    const gameDocRef = doc(db, `artifacts/${appId}/public/data/games`, currentGameId);
-    const updatedPlayers = { ...game.players };
-
-    // Reset choices and pending choices for all players before starting
-    Object.keys(updatedPlayers).forEach(pId => {
-      updatedPlayers[pId].choice = null;
-      updatedPlayers[pId].pendingChoice = null;
-    });
-
-    try {
-      await updateDoc(gameDocRef, {
-        status: 'started',
-        players: updatedPlayers, // Update players with reset choices
-        currentRound: 1, // Ensure starting at round 1 if not already
-        history: [], // Clear history for a fresh start
-        scores: {}, // Clear scores for a fresh start
-        winner: null, // Clear previous winner
-        lastUpdated: serverTimestamp(),
-      });
-      console.log("Game started with choices reset!");
-      setCurrentPage('game');
-    } catch (error) {
-      console.error("Error starting game:", error);
-      alert("Failed to start game: " + error.message);
-    }
-  };
-
-  // Handles a player making a move (rock, paper, or scissors)
-  const handlemakemove = async (move) => {
-    if (!db || !currentGameId || !userId || !game || game.status !== 'started' || game.currentRound > game.rounds) {
-      console.warn("Cannot make move: Game not ready or not started.");
-      return;
-    }
-
-    const gameDocRef = doc(db, `artifacts/${appId}/public/data/games`, currentGameId);
-    const players = { ...game.players };
-
-    // Store choice as pending for the current user
-    if (players[userId]) {
-      players[userId].pendingChoice = move;
-    }
-
-    try {
-      await updateDoc(gameDocRef, {
-        players: players,
-        lastUpdated: serverTimestamp(),
-      });
-      console.log(`Player ${userId} made a pending move: ${move}`);
-    } catch (error) {
-      console.error("Error making move:", error);
-    }
-  };
-
-  // Handles a player leaving the game
-  const handleLeaveGame = async () => {
-    if (!db || !currentGameId || !userId || !appId) {
-      console.warn("Cannot leave game: DB, game ID, or user ID not available.");
-      return;
-    }
-
-    const gameDocRef = doc(db, `artifacts/${appId}/public/data/games`, currentGameId);
-
-    try {
-      const docSnap = await getDoc(gameDocRef);
-      if (docSnap.exists()) {
-        const gameData = docSnap.data();
-        const updatedPlayers = { ...gameData.players };
-        const updatedScores = { ...gameData.scores };
-
-        // Remove player from players object
-        delete updatedPlayers[userId];
-        delete updatedScores[userId];
-
-        if (Object.keys(updatedPlayers).length === 0) {
-          // If no players left, delete the game document
-          await deleteDoc(gameDocRef);
-          console.log("Game deleted as all players left.");
-        } else {
-          // If other players remain, update the game document
-          await updateDoc(gameDocRef, {
-            players: updatedPlayers,
-            scores: updatedScores,
-            lastUpdated: serverTimestamp(),
-          });
-          console.log(`Player ${userId} left game ${currentGameId}`);
-        }
-      } else {
-        console.log("Game document not found when trying to leave.");
-      }
-    } catch (error) {
-      console.error("Error leaving game:", error);
-      alert("Failed to leave game: " + error.message);
-    } finally {
-      setCurrentGameId(null);
-      setGame(null);
-      setCurrentPage('home');
-    }
-  };
-
-  // Handles restarting the game (resetting state for a new tournament)
-  const handleRestartGame = async () => {
-    if (!db || !currentGameId || !userId || !appId || !game || game.players[userId]?.host !== true) {
-      console.warn("Cannot restart game: Not host or game not ready.");
-      return;
-    }
-
-    const gameDocRef = doc(db, `artifacts/${appId}/public/data/games`, currentGameId);
-    const initialPlayersState = {};
-    Object.keys(game.players).forEach(pId => {
-      initialPlayersState[pId] = {
-        ...game.players[pId],
-        score: 0,
-        choice: null,
-        pendingChoice: null,
-      };
-    });
-
-    try {
-      await updateDoc(gameDocRef, {
-        currentRound: 1,
-        status: 'waiting',
-        players: initialPlayersState,
-        scores: Object.keys(game.players).reduce((acc, pId) => ({ ...acc, [pId]: 0 }), {}),
-        history: [],
-        winner: null,
-        lastUpdated: serverTimestamp(),
-      });
-      setCurrentPage('lobby'); // Go back to lobby to restart
-      console.log("Game restarted.");
-    } catch (error) {
-      console.error("Error restarting game:", error);
-      alert("Failed to restart game: " + error.message);
-    }
-  };
-
-  // --- UI Components ---
-
-  // Home Page Component
-  const HomePage = ({ onShowCreateGame, onShowJoinGame, userId }) => (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 text-white p-4">
-      <div className="bg-gray-800 p-8 rounded-lg shadow-lg max-w-md w-full text-center">
-        <h1 className="text-4xl font-bold mb-4 text-green-400">Rock, Paper, Scissors Tournament</h1>
-        <p className="text-lg mb-8">Challenge your friends to an epic tournament!</p>
-        <div className="space-y-4">
-          <button
-            onClick={onShowCreateGame}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition duration-300 transform hover:scale-105"
-          >
-            Create New Game
-          </button>
-          <button
-            onClick={onShowJoinGame}
-            className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg transition duration-300 transform hover:scale-105"
-          >
-            Join Existing Game
-          </button>
-        </div>
-        <p className="mt-8 text-sm text-gray-500">Your Session ID: {userId || 'Loading...'}</p>
-      </div>
-    </div>
-  );
-
-  // Create Game Component
-  const CreateGame = ({ onCreateGame, onBack }) => {
-    const [gameName, setGameName] = useState('');
-    const [rounds, setRounds] = useState(3);
-    const [name, setName] = useState(''); // Local state for user's name
-
-    const handleSubmit = (e) => {
-      e.preventDefault();
-      if (!name.trim()) {
-        alert("Please enter your name.");
-        return;
-      }
-      if (gameName.trim() && rounds > 0) {
-        onCreateGame(gameName, rounds, name.trim()); // Pass name to onCreateGame
-      } else {
-        alert("Please enter a game name and a valid number of rounds.");
+        setCurrentGameId(code.trim().toUpperCase());
+        setCurrentPage('gameLobby');
+        setDisplayName(name.trim()); // Set display name globally
+        console.log(`Joined game: ${code.trim().toUpperCase()}`);
+      } catch (error) {
+        console.error("Error joining game:", error);
+        setErrorMessage("Failed to join game. Please try again.");
+      } finally {
+        setJoining(false);
       }
     };
 
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 text-white p-4">
-        <div className="bg-gray-800 p-8 rounded-lg shadow-lg max-w-md w-full">
-          <h2 className="text-3xl font-bold mb-6 text-center text-blue-400">Create New Game</h2>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label htmlFor="playerName" className="block text-lg font-medium text-gray-300 mb-2">Your Name:</label>
-              <input
-                type="text"
-                id="playerName"
-                className="w-full p-3 rounded-lg bg-gray-700 text-white border border-gray-600 focus:ring-blue-500 focus:border-blue-500"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-              />
-            </div>
-            <div>
-              <label htmlFor="gameName" className="block text-lg font-medium text-gray-300 mb-2">Game Name:</label>
-              <input
-                type="text"
-                id="gameName"
-                className="w-full p-3 rounded-lg bg-gray-700 text-white border border-gray-600 focus:ring-blue-500 focus:border-blue-500"
-                value={gameName}
-                onChange={(e) => setGameName(e.target.value)}
-                required
-              />
-            </div>
-            <div>
-              <label htmlFor="rounds" className="block text-lg font-medium text-gray-300 mb-2">Number of Rounds:</label>
-              <input
-                type="number"
-                id="rounds"
-                className="w-full p-3 rounded-lg bg-gray-700 text-white border border-gray-600 focus:ring-blue-500 focus:border-blue-500"
-                value={rounds}
-                onChange={(e) => setRounds(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                min="1"
-                required
-              />
-            </div>
-            <div className="flex space-x-4">
-              <button
-                type="submit"
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition duration-300 transform hover:scale-105"
-              >
-                Create Game
-              </button>
-              <button
-                type="button"
-                onClick={onBack}
-                className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg transition duration-300 transform hover:scale-105"
-              >
-                Back
-              </button>
-            </div>
-          </form>
-        </div>
+      <div className="flex flex-col items-center justify-center p-6 bg-white rounded-lg shadow-xl m-4 md:w-1/2 lg:w-1/3 mx-auto">
+        <h2 className="text-3xl font-bold text-gray-800 mb-6">Join Existing Game</h2>
+        <input
+          type="text"
+          placeholder="Your Name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="w-full p-3 mb-4 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        />
+        <input
+          type="text"
+          placeholder="Game Code (e.g., ABCDEF)"
+          value={code}
+          onChange={(e) => setCode(e.target.value.toUpperCase())}
+          className="w-full p-3 mb-4 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          maxLength="6"
+        />
+        <button
+          onClick={handleJoinGame}
+          disabled={joining || !isAuthReady}
+          className={`w-full p-3 rounded-md text-lg font-semibold transition duration-300 ${
+            joining || !isAuthReady ? 'bg-green-300 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 text-white shadow-md'
+          }`}
+        >
+          {joining ? 'Joining...' : 'Join Game'}
+        </button>
+        {errorMessage && <p className="text-red-500 mt-4 text-sm">{errorMessage}</p>}
+        <button
+          onClick={() => setCurrentPage('home')}
+          className="mt-4 text-green-600 hover:underline text-sm"
+        >
+          Back to Home
+        </button>
       </div>
     );
   };
 
-  // Join Game Component
-  const JoinGame = ({ onJoinGame, onBack }) => {
-    const [gameCode, setGameCode] = useState('');
-    const [name, setName] = useState(''); // Local state for user's name
+  // Component for the game lobby
+  const GameLobby = () => {
+    // Destructure necessary values from the Firebase context
+    const { db, userId, game, currentGameId, setCurrentPage } = useFirebase();
+    const [message, setMessage] = useState('');
+    const [showConfirmationModal, setShowConfirmationModal] = useState(false); // New state for modal
+    const isHost = game && game.hostId === userId;
+    const currentAppId = typeof __app_id !== 'undefined' ? __app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
 
-    const handleSubmit = (e) => {
-      e.preventDefault();
-      if (!name.trim()) {
-        alert("Please enter your name.");
+
+    const handleStartGame = async () => {
+      if (!game || !db || !currentGameId) return;
+
+      const activePlayers = game.players.filter(p => p.status === 'joined');
+      if (activePlayers.length < 2) {
+        setMessage('Need at least 2 players to start the game.');
         return;
       }
-      if (gameCode.trim()) {
-        onJoinGame(gameCode.toUpperCase(), name.trim()); // Pass name to onJoinGame
-      } else {
-        alert("Please enter a game code.");
+      // Removed the odd number check for players for simplicity,
+      // as the next round logic now handles 'bye' players.
+      // A message is shown if it's an odd number.
+
+      setMessage('Starting game...');
+      try {
+        // Shuffle players for fair initial pairing
+        const shuffledPlayers = [...activePlayers].sort(() => 0.5 - Math.random());
+        const initialMatches = [];
+        const nextRoundPlayers = shuffledPlayers.map(p => ({ ...p, advancedThisRound: false, wins: 0, losses: 0, status: 'playing' }));
+
+        // Handle bye: if odd number, one player gets a bye
+        let byePlayer = null;
+        if (nextRoundPlayers.length % 2 !== 0) {
+          byePlayer = nextRoundPlayers.pop(); // Take one player out for a bye
+          if (byePlayer) {
+            byePlayer.advancedThisRound = true; // Bye player automatically advances
+            console.log(`${byePlayer.name} gets a bye this round.`);
+          }
+        }
+
+        for (let i = 0; i < nextRoundPlayers.length; i += 2) {
+          const player1 = nextRoundPlayers[i];
+          const player2 = nextRoundPlayers[i + 1];
+
+          // Create a new match document in a subcollection
+          const matchRef = doc(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
+          const newMatchData = {
+            id: matchRef.id,
+            round: 1,
+            player1: { id: player1.id, name: player1.name, score: 0, move: null, lastMoveTime: null },
+            player2: { id: player2.id, name: player2.name, score: 0, move: null, lastMoveTime: null },
+            status: 'active', // 'active', 'finished'
+            winnerId: null,
+            loserId: null,
+            gamesPlayed: 0, // Number of individual RPS games played within this match
+          };
+          await setDoc(matchRef, newMatchData);
+          initialMatches.push(matchRef.id);
+        }
+
+        const finalPlayersForRound1 = byePlayer ? [...nextRoundPlayers, byePlayer] : nextRoundPlayers;
+
+        await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), {
+          status: 'playing',
+          currentRound: 1,
+          matches: initialMatches, // Store match IDs for the current round
+          players: finalPlayersForRound1, // Reset scores and status for players
+        });
+        setMessage('');
+        console.log("Game started! Initial matches created.");
+        setCurrentPage('tournament');
+      } catch (error) {
+        console.error("Error starting game:", error);
+        setMessage('Failed to start game. ' + error.message);
       }
     };
 
-    return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 text-white p-4">
-        <div className="bg-gray-800 p-8 rounded-lg shadow-lg max-w-md w-full">
-          <h2 className="text-3xl font-bold mb-6 text-center text-green-400">Join Existing Game</h2>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label htmlFor="playerName" className="block text-lg font-medium text-gray-300 mb-2">Your Name:</label>
-              <input
-                type="text"
-                id="playerName"
-                className="w-full p-3 rounded-lg bg-gray-700 text-white border border-gray-600 focus:ring-green-500 focus:border-green-500"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-              />
-            </div>
-            <div>
-              <label htmlFor="gameCode" className="block text-lg font-medium text-gray-300 mb-2">Game Code:</label>
-              <input
-                type="text"
-                id="gameCode"
-                className="w-full p-3 rounded-lg bg-gray-700 text-white border border-gray-600 focus:ring-green-500 focus:border-green-500 uppercase"
-                value={gameCode}
-                onChange={(e) => setGameCode(e.target.value)}
-                maxLength="6"
-                required
-              />
-            </div>
-            <div className="flex space-x-4">
-              <button
-                type="submit"
-                className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg transition duration-300 transform hover:scale-105"
-              >
-                Join Game
-              </button>
-              <button
-                type="button"
-                onClick={onBack}
-                className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg transition duration-300 transform hover:scale-105"
-              >
-                Back
-              </button>
-            </div>
-          </form>
+    // Function called when the user initiates leaving the game (button click)
+    const handleLeaveGameInitiate = () => {
+      if (isHost) {
+        setShowConfirmationModal(true); // Show modal for host confirmation
+      } else {
+        // Non-host players can leave directly
+        handleLeaveGameConfirm();
+      }
+    };
+
+    // Function called after host confirms leaving via modal
+    const handleLeaveGameConfirm = async () => {
+      setShowConfirmationModal(false); // Hide the modal
+
+      if (!db || !currentGameId || !userId || !game) {
+        setMessage("Error: Cannot leave game. Missing data.");
+        return;
+      }
+      const currentAppId = typeof __app_id !== 'undefined' ? __app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
+
+      try {
+        if (isHost) {
+          // Delete all matches in the subcollection first
+          const matchesSnapshot = await getDocs(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
+          const deletePromises = matchesSnapshot.docs.map(d => deleteDoc(d.ref));
+          await Promise.all(deletePromises);
+
+          // Then delete the game document
+          await deleteDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId));
+          console.log("Game deleted by host.");
+        } else {
+          // If a player leaves, update the player list
+          const updatedPlayers = game.players.filter(player => player.id !== userId);
+          await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), { players: updatedPlayers });
+          console.log("Left the game.");
+        }
+        setCurrentGameId(null);
+        setGame(null);
+        setCurrentPage('home');
+      } catch (error) {
+        console.error("Error leaving game:", error);
+        setMessage("Failed to leave game. Please try again.");
+      }
+    };
+
+    if (!game) {
+      return (
+        <div className="flex flex-col items-center justify-center p-6 bg-white rounded-lg shadow-xl m-4 md:w-1/2 lg:w-1/3 mx-auto">
+          <p className="text-xl text-gray-700">Loading game data...</p>
         </div>
-      </div>
-    );
-  };
-
-  // Game Lobby Component
-  const GameLobby = ({ game, currentGameId, userId, onStartGame, onLeaveGame }) => {
-    const isHost = game?.players[userId]?.host;
-    const playerNames = Object.values(game?.players || {}).map(p => p.name).join(', ');
+      );
+    }
 
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 text-white p-4">
-        <div className="bg-gray-800 p-8 rounded-lg shadow-lg max-w-2xl w-full text-center">
-          <h2 className="text-3xl font-bold mb-4 text-purple-400">Game Lobby: {game?.name || 'Loading...'}</h2>
-          <p className="text-lg mb-2">Game Code: <span className="font-mono text-xl text-yellow-400">{currentGameId}</span></p>
-          <p className="text-md mb-4">Rounds: {game?.rounds}</p>
+      <div className="flex flex-col items-center justify-center p-6 bg-white rounded-lg shadow-xl m-4 md:w-full lg:w-2/3 mx-auto">
+        <h2 className="text-3xl font-bold text-gray-800 mb-4">Game Lobby</h2>
+        <p className="text-xl text-gray-600 mb-6">Game Code: <span className="font-extrabold text-indigo-600 text-4xl">{currentGameId}</span></p>
+        <p className="text-lg text-gray-700 mb-4">Your ID: <span className="text-sm font-mono text-gray-500">{userId}</span></p>
 
-          <div className="mb-6">
-            <h3 className="text-2xl font-semibold mb-2 text-gray-300">Players:</h3>
-            <ul className="list-disc list-inside text-left mx-auto max-w-sm">
-              {Object.entries(game?.players || {}).map(([id, player]) => (
-                <li key={id} className="text-lg">
-                  {player.name} {id === userId ? '(You)' : ''} {player.host ? '(Host)' : ''}
+
+        <div className="w-full max-w-md bg-gray-50 p-4 rounded-md shadow-inner mb-6">
+          <h3 className="text-2xl font-semibold text-gray-700 mb-3">Players Joined:</h3>
+          {game.players && game.players.length > 0 ? (
+            <ul className="space-y-2">
+              {game.players.map((player) => (
+                <li key={player.id} className="flex items-center justify-between bg-white p-3 rounded-md shadow-sm">
+                  <span className="text-lg font-medium text-gray-800">{player.name}</span>
+                  <span className="text-sm text-gray-500">{player.id === userId ? "(You)" : ""}</span>
+                  {player.id === game.hostId && <span className="text-xs font-bold text-indigo-500">Host</span>}
                 </li>
               ))}
             </ul>
-          </div>
-
-          {isHost && Object.keys(game?.players || {}).length >= 2 && (
-            <button
-              onClick={onStartGame}
-              className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg transition duration-300 transform hover:scale-105 mb-4"
-            >
-              Start Game
-            </button>
+          ) : (
+            <p className="text-gray-500">No players yet. Share the code!</p>
           )}
-          {isHost && Object.keys(game?.players || {}).length < 2 && (
-            <p className="text-yellow-400 mb-4">Waiting for more players to join (Need 2+ to start)</p>
-          )}
-
-          <button
-            onClick={onLeaveGame}
-            className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg transition duration-300 transform hover:scale-105"
-          >
-            Leave Game
-          </button>
         </div>
+
+        {isHost && game.status === 'lobby' && (
+          <button
+            onClick={handleStartGame}
+            className="w-full max-w-xs p-4 rounded-md text-xl font-bold transition duration-300 bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg"
+          >
+            Start Tournament
+          </button>
+        )}
+        {!isHost && game.status === 'lobby' && (
+           <p className="text-center text-lg text-gray-700 mt-4">Waiting for the host to start the game...</p>
+        )}
+
+        {message && <p className="text-red-500 mt-4 text-sm text-center">{message}</p>}
+        <button
+          onClick={handleLeaveGameInitiate}
+          className="mt-6 p-3 rounded-md text-md font-semibold transition duration-300 bg-red-500 hover:bg-red-600 text-white shadow-md"
+        >
+          {isHost ? 'Delete Game & Go Home' : 'Leave Game'}
+        </button>
+
+        {/* Confirmation Modal */}
+        <ConfirmationModal
+          show={showConfirmationModal}
+          title="Confirm Game Deletion"
+          message="As the host, if you delete this game, it will be removed for everyone. This action cannot be undone."
+          onConfirm={handleLeaveGameConfirm}
+          onCancel={() => setShowConfirmationModal(false)}
+        />
       </div>
     );
   };
 
-  // Tournament Game Component
-  const TournamentGame = ({ game, userId, handlemakemove, onLeaveGame }) => {
-    if (!game) return <p className="text-white">Loading game...</p>;
+  // Component for the actual tournament play
+  const TournamentGame = () => {
+    // Destructure necessary values from the Firebase context
+    const { db, userId, game, currentGameId, displayName, setCurrentGameId, setGame, setCurrentPage } = useFirebase();
+    const [matches, setMatches] = useState([]);
+    const [currentMatchId, setCurrentMatchId] = useState(null); // The ID of the match this user is currently in
+    const [message, setMessage] = useState('');
+    const [showGameEndedModal, setShowGameEndedModal] = useState(false);
+    const [finalWinner, setFinalWinner] = useState(null);
+    const [showResetConfirmation, setShowResetConfirmation] = useState(false);
+    const [showEndGameConfirmation, setShowEndGameConfirmation] = useState(false);
 
-    const playersArray = Object.values(game.players || {});
-    const currentPlayer = game.players[userId];
-    const opponent = playersArray.find(p => p.id !== userId) || playersArray.find(p => p.name !== currentPlayer?.name); // Fallback for opponent
+    const currentAppId = typeof __app_id !== 'undefined' ? __app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
 
-    const isCurrentPlayerChosen = currentPlayer?.pendingChoice !== null && currentPlayer?.pendingChoice !== undefined;
-    const isRoundResolved = (opponent?.choice !== null && opponent?.choice !== undefined) && (currentPlayer?.choice !== null && currentPlayer?.choice !== undefined);
+    const currentPlayer = game?.players.find(p => p.id === userId);
+    const isHost = game?.hostId === userId;
 
+    // Listen to all matches in the current game
+    useEffect(() => {
+      if (db && currentGameId && game?.status === 'playing') {
+        const matchesColRef = collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`);
+        const q = query(matchesColRef);
 
-    const playerMoveDisplay = (player) => {
-      console.log(`--- PlayerMoveDisplay for: ${player.name} (ID: ${player.id === userId ? 'You' : 'Opponent'}) ---`);
-      console.log(`  isRoundResolved: ${isRoundResolved}`);
-      console.log(`  Player ID: ${player.id}`);
-      console.log(`  Current User ID: ${userId}`);
-      console.log(`  Player's Pending Choice: ${player.pendingChoice}`);
-      console.log(`  Player's Revealed Choice: ${player.choice}`);
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+          const updatedMatches = snapshot.docs.map(doc => doc.data());
+          setMatches(updatedMatches);
 
-      // If the round is resolved, show the actual choice for BOTH players
-      if (isRoundResolved) {
-        console.log(`  Round resolved, showing: ${player?.choice || 'N/A'}`);
-        return player?.choice || 'N/A';
+          // Determine the user's current match
+          const userMatch = updatedMatches.find(match =>
+            match.status === 'active' &&
+            (match.player1.id === userId || match.player2.id === userId)
+          );
+          if (userMatch) {
+            setCurrentMatchId(userMatch.id);
+          } else {
+            setCurrentMatchId(null); // User is not in an active match
+          }
+
+          // Check if tournament has a winner
+          if (game.status === 'playing') { // Only check if still playing
+            const activePlayers = game.players.filter(p => p.status === 'playing');
+            if (activePlayers.length === 1 && game.currentRound > 0) {
+              setFinalWinner(activePlayers[0]);
+              setShowGameEndedModal(true);
+              // Update game status to 'finished' in Firestore if it's not already
+              if (game.status !== 'finished') {
+                updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), { status: 'finished' });
+              }
+            } else if (activePlayers.length === 0 && game.currentRound > 0) {
+              // All players eliminated, but no single winner (e.g., all left)
+              setFinalWinner(null); // No specific winner
+              setShowGameEndedModal(true);
+              if (game.status !== 'finished') {
+                 updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), { status: 'finished' });
+              }
+            }
+          }
+
+        }, (error) => {
+          console.error("Error listening to matches:", error);
+        });
+
+        return () => unsubscribe();
+      }
+    }, [db, currentGameId, game?.status, game?.players]); // Depend on game.status to react to game ending
+
+    const handleMakeMove = async (move) => {
+      if (!currentMatchId || !db || !userId) return;
+
+      setMessage('');
+      const matchDocRef = doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId);
+      const matchSnap = await getDoc(matchDocRef);
+
+      if (!matchSnap.exists()) {
+        setMessage('Error: Match not found.');
+        return;
       }
 
-      // If the player is the current user
-      if (player.id === userId) {
-        // If the current user has made a pending choice, show "Chosen!"
-        if (player.pendingChoice) {
-          console.log(`  You've chosen, round not resolved. Showing: Chosen!`);
-          return 'Chosen!';
+      const matchData = matchSnap.data();
+      const isPlayer1 = matchData.player1.id === userId;
+
+      let updateData = {};
+      if (isPlayer1) {
+        if (matchData.player1.move) {
+          setMessage("You've already made your move for this game.");
+          return;
         }
-        console.log(`  You haven't chosen. Showing: Not Chosen`);
-        return 'Not Chosen'; // Current player hasn't chosen yet
+        updateData = { 'player1.move': move, 'player1.lastMoveTime': Date.now() };
       } else {
-        // If the player is the opponent
-        // If opponent has made a pending choice, but round is not resolved yet, show "Waiting..."
-        if (player.pendingChoice) {
-          console.log(`  Opponent chosen, round not resolved. Showing: Waiting for reveal...`);
-          return 'Waiting for reveal...';
+        if (matchData.player2.move) {
+          setMessage("You've already made your move for this game.");
+          return;
         }
-        console.log(`  Opponent hasn't chosen. Showing: Not Chosen`);
-        return 'Not Chosen'; // Opponent hasn't chosen yet
+        updateData = { 'player2.move': move, 'player2.lastMoveTime': Date.now() };
+      }
+
+      try {
+        await updateDoc(matchDocRef, updateData);
+        setMessage('Move submitted! Waiting for opponent...');
+      } catch (error) {
+        console.error("Error making move:", error);
+        setMessage('Failed to submit move.');
+      }
+    };
+
+    // Effect to check match results when a match updates
+    useEffect(() => {
+      if (db && currentGameId && currentMatchId) {
+        const unsubscribe = onSnapshot(doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId), async (matchSnap) => {
+          if (!matchSnap.exists()) return;
+
+          const matchData = matchSnap.data();
+          if (matchData.player1.move && matchData.player2.move && matchData.status === 'active') {
+            const p1Move = matchData.player1.move;
+            const p2Move = matchData.player2.move;
+            let winnerOfGame = null; // Winner of this single RPS game
+            let p1Score = matchData.player1.score;
+            let p2Score = matchData.player2.score;
+            let currentGamesPlayed = matchData.gamesPlayed + 1;
+
+            if (p1Move === p2Move) {
+              setMessage("It's a tie! Play again.");
+            } else if (
+              (p1Move === 'rock' && p2Move === 'scissors') ||
+              (p1Move === 'paper' && p2Move === 'rock') ||
+              (p1Move === 'scissors' && p2Move === 'paper')
+            ) {
+              winnerOfGame = matchData.player1.id;
+              p1Score++;
+              setMessage(`${matchData.player1.name} wins this game!`);
+            } else {
+              winnerOfGame = matchData.player2.id;
+              p2Score++;
+              setMessage(`${matchData.player2.name} wins this game!`);
+            }
+
+            // Update scores and reset moves for the next individual game
+            const updates = {
+              'player1.score': p1Score,
+              'player2.score': p2Score,
+              'player1.move': null, // Reset moves for next game
+              'player2.move': null,
+              'player1.lastMoveTime': null,
+              'player2.lastMoveTime': null,
+              gamesPlayed: currentGamesPlayed,
+            };
+
+            // Check if match winner (first to 3 games)
+            let matchWinnerId = null;
+            let matchLoserId = null;
+            let matchStatus = 'active';
+
+            if (p1Score >= 3) {
+              matchWinnerId = matchData.player1.id;
+              matchLoserId = matchData.player2.id;
+              matchStatus = 'finished';
+              setMessage(`${matchData.player1.name} wins the match! Advancing...`);
+            } else if (p2Score >= 3) {
+              matchWinnerId = matchData.player2.id;
+              matchLoserId = matchData.player1.id;
+              matchStatus = 'finished';
+              setMessage(`${matchData.player2.name} wins the match! Advancing...`);
+            }
+
+            updates.status = matchStatus;
+            updates.winnerId = matchWinnerId;
+            updates.loserId = matchLoserId;
+
+            await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId), updates);
+
+            // If a match finishes, update player status in the main game document
+            if (matchStatus === 'finished' && matchWinnerId && matchLoserId) {
+              const gameDocRef = doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId);
+              const gameSnap = await getDoc(gameDocRef);
+              const gameData = gameSnap.data();
+
+              const updatedPlayers = gameData.players.map(p => {
+                if (p.id === matchWinnerId) {
+                  return { ...p, advancedThisRound: true, status: 'playing', wins: (p.wins || 0) + 1 }; // Ensure winner stays 'playing'
+                } else if (p.id === matchLoserId) {
+                  return { ...p, status: 'eliminated', losses: (p.losses || 0) + 1 };
+                }
+                return p;
+              });
+              await updateDoc(gameDocRef, { players: updatedPlayers });
+            }
+          }
+        });
+        return () => unsubscribe();
+      }
+    }, [db, currentGameId, currentMatchId, userId]);
+
+
+    // Host-specific logic to advance to the next round
+    const handleNextRound = async () => {
+      if (!isHost || !db || !currentGameId || !game) return;
+
+      const currentRound = game.currentRound;
+      const playersInCurrentRound = game.players.filter(p => p.status === 'playing' && p.advancedThisRound);
+
+      if (playersInCurrentRound.length < 1) { // If everyone eliminated or no one advanced
+        setMessage("No players advanced, or all players eliminated. Game might be over or needs more players.");
+        return;
+      }
+      if (playersInCurrentRound.length === 1) {
+        setMessage(`Tournament Winner: ${playersInCurrentRound[0].name}!`);
+        setFinalWinner(playersInCurrentRound[0]);
+        setShowGameEndedModal(true);
+        await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), {
+          status: 'finished',
+        });
+        return;
+      }
+      // Removed the odd number check for players for simplicity,
+      // as the next round logic now handles 'bye' players.
+      // A message is shown if it's an odd number.
+
+
+      setMessage(`Starting Round ${currentRound + 1}...`);
+      try {
+        // Clear previous round's matches
+        const prevMatchesSnapshot = await getDocs(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
+        const deletePromises = prevMatchesSnapshot.docs.map(d => deleteDoc(d.ref));
+        await Promise.all(deletePromises);
+        console.log("Previous round matches cleared.");
+
+        // Shuffle players for fair pairing
+        const shuffledPlayers = [...playersInCurrentRound].sort(() => 0.5 - Math.random());
+        const nextRoundMatches = [];
+        const playersForNextRoundUpdate = shuffledPlayers.map(p => ({ ...p, advancedThisRound: false })); // Reset advanced status
+
+        // Handle bye: if odd number, one player gets a bye
+        let byePlayer = null;
+        if (playersForNextRoundUpdate.length % 2 !== 0) {
+          byePlayer = playersForNextRoundUpdate.pop(); // Take one player out for a bye
+          if (byePlayer) {
+            byePlayer.advancedThisRound = true; // Bye player automatically advances
+            console.log(`${byePlayer.name} gets a bye this round.`);
+          }
+        }
+
+        for (let i = 0; i < playersForNextRoundUpdate.length; i += 2) {
+          const player1 = playersForNextRoundUpdate[i];
+          const player2 = playersForNextRoundUpdate[i + 1];
+
+          const matchRef = doc(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
+          const newMatchData = {
+            id: matchRef.id,
+            round: currentRound + 1,
+            player1: { id: player1.id, name: player1.name, score: 0, move: null, lastMoveTime: null },
+            player2: { id: player2.id, name: player2.name, score: 0, move: null, lastMoveTime: null },
+            status: 'active',
+            winnerId: null,
+            loserId: null,
+            gamesPlayed: 0,
+          };
+          await setDoc(matchRef, newMatchData);
+          nextRoundMatches.push(matchRef.id);
+        }
+
+        const finalPlayersForNextRound = byePlayer ? [...playersForNextRoundUpdate, byePlayer] : playersForNextRoundUpdate;
+
+        await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), {
+          currentRound: currentRound + 1,
+          matches: nextRoundMatches,
+          players: finalPlayersForNextRound, // Update players list for next round
+        });
+
+        setMessage('');
+        console.log(`Round ${currentRound + 1} started.`);
+      } catch (error) {
+        console.error("Error advancing to next round:", error);
+        setMessage('Failed to start next round: ' + error.message);
       }
     };
 
 
-    const getWinnerMessage = (round) => {
-      const historyEntry = game.history.find(entry => entry.round === round);
-      if (historyEntry) {
-        if (historyEntry.winner === 'Tie') {
-          return "It's a tie!";
-        }
-        return `${historyEntry.winner} won Round ${round}!`;
+    const currentMatch = matches.find(m => m.id === currentMatchId);
+    const opponent = currentMatch
+      ? (currentMatch.player1.id === userId ? currentMatch.player2 : currentMatch.player1)
+      : null;
+    const self = currentMatch
+      ? (currentMatch.player1.id === userId ? currentMatch.player1 : currentMatch.player2)
+      : null;
+
+    const allMatchesFinished = game?.matches?.every(matchId => {
+      const match = matches.find(m => m.id === matchId);
+      return match && match.status === 'finished';
+    });
+
+    const playersInTournament = game?.players.filter(p => p.status === 'playing' || p.status === 'eliminated').length || 0;
+    const playersRemaining = game?.players.filter(p => p.status === 'playing').length || 0;
+
+
+    // Filter players to show for scoreboard in current round
+    const scoreboardPlayers = game?.players
+      .filter(p => p.status === 'playing' || p.status === 'eliminated' || p.status === 'joined') // Include 'joined' for initial lobby players
+      .sort((a, b) => {
+        // Sort by 'playing' first, then 'eliminated', then by wins (desc)
+        if (a.status === 'playing' && b.status !== 'playing') return -1;
+        if (a.status !== 'playing' && b.status === 'playing') return 1;
+        return (b.wins || 0) - (a.wins || 0);
+      });
+
+    // Handle initiation of going back to lobby (host only)
+    const handleBackToLobbyInitiate = () => {
+      if (isHost) {
+        setShowResetConfirmation(true);
+      } else {
+        // Non-host just navigates back
+        handleBackToLobbyConfirm();
       }
-      return "Round not yet played.";
     };
+
+    const handleBackToLobbyConfirm = async () => {
+      setShowResetConfirmation(false); // Hide modal
+
+      if (!db || !currentGameId || !userId || !game) {
+        setMessage("Error: Cannot reset game. Missing data.");
+        return;
+      }
+      const currentAppId = typeof __app_id !== 'undefined' ? __app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
+
+      try {
+        // Delete all matches in the subcollection first
+        const matchesSnapshot = await getDocs(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
+        const deletePromises = matchesSnapshot.docs.map(d => deleteDoc(d.ref));
+        await Promise.all(deletePromises);
+
+        // Reset game status and player states in main game document
+        await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), {
+          status: 'lobby',
+          currentRound: 0,
+          matches: [],
+          players: game.players.map(p => ({ ...p, status: 'joined', wins: 0, losses: 0, advancedThisRound: false })),
+        });
+        console.log("Game reset to lobby state by host.");
+
+        setCurrentPage('gameLobby');
+      } catch (error) {
+        console.error("Error going back to lobby:", error);
+        setMessage("Failed to go back to lobby.");
+      }
+    };
+
+    const handleEndGameInitiate = () => {
+      if (isHost) {
+        setShowEndGameConfirmation(true);
+      }
+    };
+
+    const handleEndGameConfirm = async () => {
+      setShowEndGameConfirmation(false); // Hide modal
+
+      if (!db || !currentGameId || !game) {
+        setMessage("Error: Cannot end game. Missing data.");
+        return;
+      }
+      const currentAppId = typeof __app_id !== 'undefined' ? __app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
+
+      try {
+        // Delete all matches in the subcollection first
+        const matchesSnapshot = await getDocs(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
+        const deletePromises = matchesSnapshot.docs.map(d => deleteDoc(d.ref));
+        await Promise.all(deletePromises);
+
+        // Delete the game document itself
+        await deleteDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId));
+        console.log("Game deleted after ending.");
+        setCurrentGameId(null);
+        setGame(null);
+        setCurrentPage('home');
+      } catch (error) {
+        console.error("Error ending game:", error);
+        setMessage("Failed to end game.");
+      }
+    };
+
+
+    if (!game) {
+      return (
+        <div className="flex flex-col items-center justify-center p-6 bg-white rounded-lg shadow-xl m-4 md:w-1/2 lg:w-1/3 mx-auto">
+          <p className="text-xl text-gray-700">Loading tournament data...</p>
+        </div>
+      );
+    }
 
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 text-white p-4">
-        <div className="bg-gray-800 p-8 rounded-lg shadow-lg max-w-4xl w-full text-center">
-          <h2 className="text-4xl font-bold mb-4 text-purple-400">{game.name}</h2>
-          <p className="text-xl mb-6">Round {game.currentRound} of {game.rounds}</p>
+      <div className="flex flex-col items-center justify-center p-6 bg-white rounded-lg shadow-xl m-4 md:w-full lg:w-2/3 mx-auto relative overflow-hidden">
+        <h2 className="text-4xl font-extrabold text-gray-900 mb-2">Tournament</h2>
+        <p className="text-xl text-indigo-600 mb-6">Round: {game.currentRound}</p>
+        <p className="text-lg text-gray-700 mb-4">You are: <span className="font-semibold text-xl">{displayName || 'Anonymous'}</span> (ID: <span className="text-sm font-mono text-gray-500">{userId}</span>)</p>
 
-          {/* Player Scores */}
-          <div className="flex justify-around mb-8">
-            {playersArray.map(player => (
-              <div key={player.id} className="flex flex-col items-center">
-                <span className="text-2xl font-semibold">{player.name} {player.id === userId && '(You)'}</span>
-                <span className="text-5xl font-extrabold text-blue-400">{game.scores[player.id] || 0}</span>
-              </div>
-            ))}
+        {game.status === 'finished' && (
+          <div className="absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+            <div className="bg-white p-8 rounded-lg shadow-2xl text-center animate-bounce-in">
+              <h3 className="text-5xl font-extrabold text-yellow-500 mb-4">🏆 Tournament Ended! 🏆</h3>
+              {finalWinner ? (
+                <p className="text-4xl font-bold text-green-700 mb-6">{finalWinner.name} is the Champion!</p>
+              ) : (
+                <p className="text-4xl font-bold text-gray-700 mb-6">No clear winner (e.g., game reset or all left).</p>
+              )}
+
+              {isHost && (
+                <button
+                  onClick={handleEndGameInitiate}
+                  className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition duration-300"
+                >
+                  End Game Completely
+                </button>
+              )}
+              {!isHost && (
+                <button
+                  onClick={() => {
+                    setCurrentGameId(null);
+                    setGame(null);
+                    setCurrentPage('home');
+                  }}
+                  className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition duration-300"
+                >
+                  Go Home
+                </button>
+              )}
+            </div>
           </div>
+        )}
 
-          {/* Current Round Status / Choices */}
-          <div className="mb-8">
-            <h3 className="text-2xl font-semibold mb-4 text-gray-300">Your Move:</h3>
-            <div className="flex justify-center space-x-4 mb-6">
-              {['rock', 'paper', 'scissors'].map(move => (
+        {currentMatch ? (
+          <div className="bg-gradient-to-br from-indigo-500 to-purple-600 text-white p-6 rounded-xl shadow-lg w-full max-w-md mb-6 transform hover:scale-105 transition duration-300">
+            <h3 className="text-2xl font-bold mb-3 text-center">Your Match</h3>
+            <div className="flex justify-between items-center text-xl font-semibold mb-4">
+              <span className="flex-1 text-center">{self.name} <br/> ({self.score})</span>
+              <span className="mx-4 text-3xl">VS</span>
+              <span className="flex-1 text-center">{opponent.name} <br/> ({opponent.score})</span>
+            </div>
+            <p className="text-center text-sm mb-4">First to 3 wins the match!</p>
+
+            <div className="flex justify-around mt-4">
+              {['rock', 'paper', 'scissors'].map((move) => (
                 <button
                   key={move}
-                  onClick={() => handlemakemove(move)}
-                  disabled={isCurrentPlayerChosen} // Disable after player has made a choice
-                  className={`px-6 py-3 rounded-lg text-xl font-bold transition duration-300 transform hover:scale-105
-                    ${isCurrentPlayerChosen ? 'bg-gray-600 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}
+                  onClick={() => handleMakeMove(move)}
+                  disabled={self.move !== null || currentMatch.status !== 'active' || game.status !== 'playing'}
+                  className={`p-4 rounded-full text-4xl shadow-md transition duration-300 transform hover:scale-110
+                    ${self.move === move ? 'bg-yellow-400' : 'bg-white text-indigo-700 hover:bg-gray-200'}
+                    ${self.move !== null || currentMatch.status !== 'active' || game.status !== 'playing' ? 'opacity-50 cursor-not-allowed' : ''}
+                  `}
+                  title={`Play ${move}`}
                 >
-                  {move.charAt(0).toUpperCase() + move.slice(1)}
+                  {move === 'rock' && '✊'}
+                  {move === 'paper' && '✋'}
+                  {move === 'scissors' && '✌️'}
                 </button>
               ))}
             </div>
-
-            <p className="text-xl">
-              Your Choice: <span className="font-bold">{playerMoveDisplay(currentPlayer)}</span>
-            </p>
-            <p className="text-xl">
-              Opponent's Choice ({opponent?.name || 'Waiting'}): <span className="font-bold">{playerMoveDisplay(opponent)}</span>
-            </p>
-
-            {isCurrentPlayerChosen && !isRoundResolved && (
-              <p className="text-yellow-400 mt-4">Waiting for opponent to make a move...</p>
+            {self.move && <p className="text-center mt-4 text-xl font-semibold">You played: <span className="capitalize">{self.move}</span></p>}
+            {opponent.move && <p className="text-center mt-2 text-xl font-semibold">Opponent played: <span className="capitalize">{opponent.move}</span></p>}
+            {/* Display "Waiting for opponent" or "Opponent chose!" based on opponent.move */}
+            {!opponent.move && self.move && (
+              <p className="text-center text-yellow-200 mt-2 text-lg">Waiting for {opponent.name} to choose...</p>
             )}
-            {isRoundResolved && (
-              <p className="text-green-400 mt-4 text-2xl font-semibold">{getWinnerMessage(game.currentRound - 1)}</p>
+            {opponent.move && !self.move && (
+              <p className="text-center text-yellow-200 mt-2 text-lg">{opponent.name} has chosen! Make your move.</p>
             )}
           </div>
+        ) : (
+          <div className="bg-gray-100 p-6 rounded-xl shadow-inner w-full max-w-md mb-6">
+            <h3 className="text-2xl font-bold text-gray-700 mb-3 text-center">Waiting for Next Match...</h3>
+            <p className="text-center text-gray-600">
+              {currentPlayer?.status === 'eliminated' ? (
+                "You have been eliminated from the tournament. Thanks for playing!"
+              ) : currentPlayer?.advancedThisRound ? (
+                "You won your match! Waiting for the next round to start."
+              ) : (
+                "Waiting for your match to be assigned or for the host to start the next round."
+              )}
+            </p>
+          </div>
+        )}
 
-          {/* Round History (Optional - for debugging/review) */}
-          {game.history && game.history.length > 0 && (
-            <div className="mt-8 bg-gray-700 p-6 rounded-lg">
-              <h3 className="text-2xl font-semibold mb-4 text-gray-300">Game History:</h3>
-              <div className="space-y-4 text-left">
-                {game.history.map((entry, index) => (
-                  <div key={index} className="border-b border-gray-600 pb-4 last:border-b-0">
-                    <p className="text-xl font-bold">Round {entry.round}:</p>
-                    {Object.values(entry.players).map(p => (
-                      <p key={p.name} className="text-lg ml-4">- {p.name} chose: <span className="font-semibold">{p.choice}</span></p>
-                    ))}
-                    <p className="text-xl font-semibold mt-2">Winner: {entry.winner}</p>
-                    <p className="text-sm text-gray-400">Scores: {Object.entries(entry.scores).map(([pId, score]) => `${game.players[pId]?.name || pId}: ${score}`).join(', ')}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+        {message && (
+          <div className="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 w-full max-w-md rounded-md shadow mb-6" role="alert">
+            <p className="font-bold">Info</p>
+            <p>{message}</p>
+          </div>
+        )}
 
+        <div className="w-full max-w-lg bg-gray-50 p-6 rounded-lg shadow-inner mb-6">
+          <h3 className="text-2xl font-bold text-gray-800 mb-4 text-center">Tournament Scoreboard</h3>
+          <ul className="space-y-3">
+            {scoreboardPlayers.map(player => (
+              <li key={player.id} className={`flex justify-between items-center p-3 rounded-md shadow-sm
+                ${player.status === 'playing' ? 'bg-blue-100 border-l-4 border-blue-500' : 'bg-gray-200 opacity-75'}
+                ${player.id === userId ? 'ring-2 ring-purple-500' : ''}
+              `}>
+                <span className="font-semibold text-lg text-gray-900 flex-grow">{player.name} {player.id === userId && '(You)'}</span>
+                <span className="text-gray-700 text-sm italic mr-4">({player.id})</span>
+                <span className="font-bold text-xl">
+                  {player.status === 'eliminated' ? '🚫 Eliminated' : `🏆 ${(player.wins || 0)} wins`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {isHost && allMatchesFinished && playersRemaining > 1 && game.status === 'playing' && (
           <button
-            onClick={onLeaveGame}
-            className="mt-8 w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg transition duration-300 transform hover:scale-105"
+            onClick={handleNextRound}
+            className="w-full max-w-xs p-4 rounded-md text-xl font-bold transition duration-300 bg-blue-600 hover:bg-blue-700 text-white shadow-lg mt-6"
           >
-            Leave Game
+            Start Next Round
           </button>
-        </div>
-      </div>
-    );
-  };
+        )}
 
-  // Game Ended Modal Component
-  const GameEndedModal = ({ game, onRestartGame, onLeaveGame }) => {
-    if (game?.status !== 'ended') return null; // Only show if game has ended
-
-    const winnerName = game.winner === 'Tie' ? 'It\'s a Tie!' : (game.players[game.winner]?.name || 'Unknown Winner');
-
-    return (
-      <div
-        id="gameEndedModal" // Used for direct DOM manipulation fallback in resolveRound
-        className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50"
-      >
-        <div className="bg-gray-800 p-8 rounded-lg shadow-xl max-w-md w-full text-center border-2 border-green-500">
-          <h2 className="text-4xl font-bold mb-4 text-green-400">Game Over!</h2>
-          <p className="text-2xl mb-6">Winner: <span className="font-extrabold">{winnerName}</span></p>
-          <div className="space-y-4">
-            {game.players[userId]?.host && (
-              <button
-                onClick={onRestartGame}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition duration-300 transform hover:scale-105"
-              >
-                Restart Game
-              </button>
-            )}
+        {isHost && (playersRemaining === 1 || game.status === 'finished') && (
             <button
-              onClick={onLeaveGame}
-              className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg transition duration-300 transform hover:scale-105"
+              onClick={handleEndGameInitiate}
+              className="w-full max-w-xs p-4 rounded-md text-xl font-bold transition duration-300 bg-red-600 hover:bg-red-700 text-white shadow-lg mt-6"
             >
-              Leave Game
+              End Tournament
             </button>
-          </div>
-        </div>
+        )}
+
+        {!isHost && (playersRemaining === 1 || game.status === 'finished') && (
+          <p className="mt-6 text-center text-lg text-gray-700">The tournament has ended. Waiting for the host to finalize the game.</p>
+        )}
+        <button
+          onClick={handleBackToLobbyInitiate}
+          className="mt-6 p-3 rounded-md text-md font-semibold transition duration-300 bg-gray-500 hover:bg-gray-600 text-white shadow-md"
+          disabled={game.status === 'finished' && !isHost}
+        >
+          {isHost ? 'Reset Game to Lobby' : 'Back to Lobby'}
+        </button>
+
+        {/* Confirmation Modals for TournamentGame */}
+        <ConfirmationModal
+          show={showResetConfirmation}
+          title="Confirm Game Reset"
+          message="As the host, if you reset this game to the lobby, all current tournament progress and matches will be cleared. Players will return to the lobby."
+          onConfirm={handleBackToLobbyConfirm}
+          onCancel={() => setShowResetConfirmation(false)}
+        />
+        <ConfirmationModal
+          show={showEndGameConfirmation}
+          title="Confirm Tournament End"
+          message="As the host, if you end this tournament, the game will be permanently deleted for everyone. This cannot be undone."
+          onConfirm={handleEndGameConfirm}
+          onCancel={() => setShowEndGameConfirmation(false)}
+        />
       </div>
     );
   };
@@ -909,61 +1104,27 @@ const App = () => {
   return (
     <FirebaseContext.Provider value={{
       db, auth, userId, setUserId, displayName, setDisplayName,
-      isAuthReady, appId,
-      currentGameId, setCurrentGameId, game, setGame, currentPage, setCurrentPage
+      isAuthReady, currentPage, setCurrentPage, currentGameId, setCurrentGameId, game, setGame
     }}>
-      <div className="min-h-screen bg-gray-900 text-white font-inter">
-        {currentPage === 'home' && (
-          <HomePage
-            onShowCreateGame={() => setCurrentPage('create')}
-            onShowJoinGame={() => setCurrentPage('join')}
-            userId={userId}
-          />
-        )}
-
-        {currentPage === 'create' && (
-          <CreateGame
-            onCreateGame={createGame}
-            onBack={() => setCurrentPage('home')}
-            setDisplayName={setDisplayName} // Pass setDisplayName down
-          />
-        )}
-
-        {currentPage === 'join' && (
-          <JoinGame
-            onJoinGame={joinGame}
-            onBack={() => setCurrentPage('home')}
-            setDisplayName={setDisplayName} // Pass setDisplayName down
-          />
-        )}
-
-        {currentPage === 'lobby' && (
-          <GameLobby
-            game={game}
-            currentGameId={currentGameId}
-            userId={userId}
-            onStartGame={handleStartGame}
-            onLeaveGame={handleLeaveGame}
-          />
-        )}
-
-        {currentPage === 'game' && (
-          <TournamentGame
-            game={game}
-            userId={userId}
-            handlemakemove={handlemakemove}
-            onLeaveGame={handleLeaveGame}
-          />
-        )}
-
-        {/* This modal is displayed conditionally based on game.status */}
-        {game?.status === 'ended' && (
-          <GameEndedModal
-            game={game}
-            onRestartGame={handleRestartGame}
-            onLeaveGame={handleLeaveGame}
-          />
-        )}
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+        {
+          (() => {
+            switch (currentPage) {
+              case 'home':
+                return <Home />;
+              case 'createGame':
+                return <CreateGame />;
+              case 'joinGame':
+                return <JoinGame />;
+              case 'gameLobby':
+                return <GameLobby />;
+              case 'tournament':
+                return <TournamentGame />;
+              default:
+                return <Home />; // Fallback
+            }
+          })()
+        }
       </div>
     </FirebaseContext.Provider>
   );
