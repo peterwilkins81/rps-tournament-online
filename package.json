@@ -2,7 +2,7 @@
   "name": "rps-tournament-online",
   "version": "0.1.0",
   "private": true,
-  "https://peterwilkins81.github.io/rps-tournament-online",
+  "homepage": "https://peterwilkins81.github.io/rps-tournament-online",
   "dependencies": {
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
