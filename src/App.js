@@ -1232,7 +1232,7 @@ const App = () => {
           matches={matches}
           currentUserId={userId}
         />
-      </div>
+      </Fragment>
     </FirebaseContext.Provider>
   );
 };
