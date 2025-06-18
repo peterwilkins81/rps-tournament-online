@@ -693,6 +693,17 @@ const App = () => {
           if (!matchSnap.exists()) return;
 
           const matchData = matchSnap.data();
+          // Debugging log for current match data
+          console.log("Current Match Data for UI:", {
+              gamesPlayed: matchData.gamesPlayed,
+              gameHistoryLength: matchData.gameHistory?.length,
+              player1Move: matchData.player1.move,
+              player2Move: matchData.player2.move,
+              player1PendingMove: matchData.player1.pendingMove,
+              player2PendingMove: matchData.player2.pendingMove,
+              status: matchData.status
+          });
+
           if (matchData.player1.pendingMove && matchData.player2.pendingMove && matchData.status === 'active') {
             const p1Move = matchData.player1.pendingMove;
             const p2Move = matchData.player2.pendingMove;
@@ -1050,6 +1061,7 @@ const App = () => {
         {currentMatch ? (
           <div className="bg-gradient-to-br from-indigo-500 to-purple-600 text-white p-6 rounded-xl shadow-lg w-full max-w-md mb-6 transform hover:scale-105 transition duration-300">
             <h3 className="text-2xl font-bold mb-3 text-center">Your Match</h3>
+            <p className="text-center text-sm mb-2">(Individual RPS games within this match)</p> {/* Added clarification */}
             <div className="flex justify-between items-center text-xl font-semibold mb-4">
               <span className="flex-1 text-center">{self.name} <br/> ({self.score})</span>
               <span className="mx-4 text-3xl">VS</span>
@@ -1104,7 +1116,7 @@ const App = () => {
 
             {currentMatch.gameHistory && currentMatch.gameHistory.length > 0 && (
               <div className="mt-6 bg-purple-700 p-4 rounded-lg shadow-md">
-                <h4 className="text-xl font-semibold mb-3 text-white">Individual Game Results:</h4>
+                <h4 className="text-xl font-semibold mb-3 text-white">Individual Game Results: <span className="text-sm font-normal">(Total: {currentMatch.gamesPlayed})</span></h4> {/* Added total games count */}
                 <ul className="space-y-2">
                   {currentMatch.gameHistory.map((gameRec, index) => (
                     <li key={index} className="flex flex-col items-start bg-purple-800 p-3 rounded-md text-sm text-gray-100">
