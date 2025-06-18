@@ -649,7 +649,7 @@ const App = () => {
 
   // 10. TournamentGame Component
   const TournamentGame = () => {
-    const { db, userId, game, currentGameId, displayName, setCurrentGameId, setGame, setCurrentPage, finalWinner, setFinalWinner, showGameEndedModal, setShowGameEndedModal } = useFirebase();
+    const { db, userId, game, currentGameId, displayName, setCurrentGameId, setGame, setCurrentPage, finalWinner, setFinalWinner, showGameEndedModal, setShowGameEndedModal, isHost } = useFirebase();
     const [matches, setMatches] = useState([]);
     const [currentMatchId, setCurrentMatchId] = useState(null);
     const [message, setMessage] = useState('');
@@ -660,7 +660,7 @@ const App = () => {
 
     const currentAppId = hardcodedAppId; // Using the hardcoded appId
     const currentPlayer = game?.players.find(p => p.id === userId);
-    const isHost = game?.hostId === userId;
+    // isHost is already available from context in this component
 
     // Listen to all matches in the current game's subcollection
     useEffect(() => {
@@ -1029,40 +1029,6 @@ const App = () => {
         <p className="text-xl text-indigo-600 mb-6">Round: {game.currentRound}</p>
         <p className="text-lg text-gray-700 mb-4">You are: <span className="font-semibold text-xl">{displayName || 'Anonymous'}</span> (ID: <span className="text-sm font-mono text-gray-500">{userId}</span>)</p>
 
-        {game.status === 'finished' && (
-          <div className="absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
-            <div className="bg-white p-8 rounded-lg shadow-2xl text-center animate-bounce-in">
-              <h3 className="text-5xl font-extrabold text-yellow-500 mb-4">🏆 Tournament Ended! 🏆</h3>
-              {finalWinner ? (
-                <p className="text-4xl font-bold text-green-700 mb-6">{finalWinner.name} is the Champion!</p>
-              ) : (
-                <p className="text-4xl font-bold text-gray-700 mb-6">No clear winner (e.g., game reset or all left).</p>
-              )}
-
-              {isHost && (
-                <button
-                  onClick={handleEndGameInitiate}
-                  className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition duration-300"
-                >
-                  End Game Completely
-                </button>
-              )}
-              {!isHost && (
-                <button
-                  onClick={() => {
-                    setCurrentGameId(null);
-                    setGame(null);
-                    setCurrentPage('home');
-                  }}
-                  className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition duration-300"
-                >
-                  Go Home
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
         {currentMatch ? (
           <div className="bg-gradient-to-br from-indigo-500 to-purple-600 text-white p-6 rounded-xl shadow-lg w-full max-w-md mb-6 transform hover:scale-105 transition duration-300">
             <h3 className="text-2xl font-bold mb-3 text-center">Your Match</h3>
@@ -1232,6 +1198,70 @@ const App = () => {
           matches={matches}
           currentUserId={userId}
         />
+      </div>
+    );
+  }; // End of TournamentGame component
+
+  // Corrected App component return structure
+  // The App component itself should return JSX,
+  // and the entire content within the FirebaseContext.Provider must be valid JSX.
+  return (
+    <FirebaseContext.Provider value={{ db, auth, userId, displayName, isAuthReady, setCurrentPage, currentGameId, setCurrentGameId, game, setGame, finalWinner, setFinalWinner, showGameEndedModal, setShowGameEndedModal, isHost: game?.hostId === userId }}>
+      {/* This Fragment is essential to wrap all top-level elements returned by the App component */}
+      <Fragment>
+        {/* Conditional rendering for different pages */}
+        {currentPage === 'home' && <Home />}
+        {currentPage === 'createGame' && <CreateGame />}
+        {currentPage === 'joinGame' && <JoinGame />}
+        {currentPage === 'gameLobby' && <GameLobby />}
+        {currentPage === 'tournament' && <TournamentGame />}
+
+        {/* Global Tournament Ended Modal, controlled by App's state */}
+        {showGameEndedModal && game?.status === 'finished' && (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+            <div className="bg-white p-8 rounded-lg shadow-2xl text-center animate-bounce-in">
+              <h3 className="text-5xl font-extrabold text-yellow-500 mb-4">🏆 Tournament Ended! 🏆</h3>
+              {finalWinner ? (
+                <p className="text-4xl font-bold text-green-700 mb-6">{finalWinner.name} is the Champion!</p>
+              ) : (
+                <p className="text-4xl font-bold text-gray-700 mb-6">No clear winner (e.g., game reset or all left).</p>
+              )}
+
+              {game?.hostId === userId && (
+                <button
+                  onClick={() => {
+                    // Call the App-level handleEndGameConfirm to clean up and go home
+                    // Need to ensure handleEndGameConfirm is accessible from here
+                    // For now, directly setting state, but should ideally call a function passed down
+                    // Or make handleEndGameConfirm part of the App component and ensure it's called correctly.
+                    // For simplicity, let's keep it direct for the modal's purpose.
+                    setCurrentGameId(null);
+                    setGame(null);
+                    setCurrentPage('home');
+                    setShowGameEndedModal(false);
+                    setFinalWinner(null); // Clear winner
+                  }}
+                  className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition duration-300"
+                >
+                  End Game Completely
+                </button>
+              )}
+              {game?.hostId !== userId && (
+                <button
+                  onClick={() => {
+                    setCurrentGameId(null);
+                    setGame(null);
+                    setCurrentPage('home');
+                    setShowGameEndedModal(false);
+                  }}
+                  className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition duration-300"
+                >
+                  Go Home
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </Fragment>
     </FirebaseContext.Provider>
   );
