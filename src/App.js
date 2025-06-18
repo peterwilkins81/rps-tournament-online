@@ -414,10 +414,7 @@ const App = () => {
         const playerExists = gameData.players.some(player => player.id === userId);
 
         if (!playerExists) {
-          if (gameData.players.length >= 2) {
-            setErrorMessage('Game is full. Cannot join.');
-            return;
-          }
+          // Allow joining regardless of player count for tournament
           const updatedPlayers = [...gameData.players, { id: userId, name: name.trim(), status: 'joined', wins: 0, losses: 0, advancedThisRound: false }];
           await updateDoc(gameDocRef, { players: updatedPlayers });
         } else {
@@ -486,66 +483,107 @@ const App = () => {
     // Using the hardcoded appId
     const currentAppId = hardcodedAppId; 
 
+    // Helper to get next power of 2 for bracket size
+    const getNextPowerOfTwo = (n) => {
+      if (n <= 1) return 1;
+      let power = 2;
+      while (power < n) {
+        power *= 2;
+      }
+      return power;
+    };
+
     const handleStartGame = async () => {
       if (!game || !db || !currentGameId) return;
 
       const activePlayers = game.players.filter(p => p.status === 'joined');
       if (activePlayers.length < 2) {
-        setMessage('Need at least 2 players to start the game.');
+        setMessage('Need at least 2 players to start the tournament.');
         return;
       }
 
       setMessage('Starting game...');
       try {
-        const shuffledPlayers = [...activePlayers].sort(() => 0.5 - Math.random());
-        const initialMatches = [];
-        const nextRoundPlayers = shuffledPlayers.map(p => ({ ...p, advancedThisRound: false, wins: 0, losses: 0, status: 'playing' }));
+        const totalBracketSize = getNextPowerOfTwo(activePlayers.length);
+        let playersForBracket = [...activePlayers].sort(() => 0.5 - Math.random()); // Shuffle players
 
-        let byePlayer = null;
-        if (nextRoundPlayers.length % 2 !== 0) {
-          byePlayer = nextRoundPlayers.pop();
+        const initialRoundMatches = [];
+        const nextRoundPlayers = []; // Players who will advance from this round
+
+        // Assign byes for the first round
+        const byesNeeded = totalBracketSize - playersForBracket.length;
+        const byePlayers = [];
+        for (let i = 0; i < byesNeeded; i++) {
+          // Give byes to randomly selected players to advance them directly
+          const byePlayerIndex = Math.floor(Math.random() * playersForBracket.length);
+          const byePlayer = playersForBracket.splice(byePlayerIndex, 1)[0];
           if (byePlayer) {
-            byePlayer.advancedThisRound = true;
+            byePlayers.push({ ...byePlayer, advancedThisRound: true, status: 'playing' }); // Mark as playing and advanced
             console.log(`${byePlayer.name} gets a bye this round.`);
           }
         }
 
-        for (let i = 0; i < nextRoundPlayers.length; i += 2) {
-          const player1 = nextRoundPlayers[i];
-          const player2 = nextRoundPlayers[i + 1];
+        // Create actual matches for the first round
+        for (let i = 0; i < playersForBracket.length; i += 2) {
+          const player1 = playersForBracket[i];
+          const player2 = playersForBracket[i + 1];
 
-          const matchRef = doc(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
-          const newMatchData = {
-            id: matchRef.id,
-            round: 1,
-            player1: { id: player1.id, name: player1.name, score: 0, move: null, pendingMove: null, lastMoveTime: null },
-            player2: { id: player2.id, name: player2.name, score: 0, move: null, pendingMove: null, lastMoveTime: null },
-            status: 'active',
-            winnerId: null,
-            loserId: null,
-            gamesPlayed: 0,
-            gameHistory: [],
-          };
-          await setDoc(matchRef, newMatchData);
-          initialMatches.push(matchRef.id);
+          if (player1 && player2) {
+            const matchRef = doc(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
+            const newMatchData = {
+              id: matchRef.id,
+              round: 1, // First official round
+              player1: { id: player1.id, name: player1.name, score: 0, move: null, pendingMove: null, lastMoveTime: null },
+              player2: { id: player2.id, name: player2.name, score: 0, move: null, pendingMove: null, lastMoveTime: null },
+              status: 'active',
+              winnerId: null,
+              loserId: null,
+              gamesPlayed: 0,
+              gameHistory: [],
+            };
+            await setDoc(matchRef, newMatchData);
+            initialRoundMatches.push(newMatchData); // Store full match data, not just ID
+          }
         }
 
-        const finalPlayersForRound1 = byePlayer ? [...nextRoundPlayers, byePlayer] : nextRoundPlayers;
+        // Combine players who are playing in a match with those who got a bye for the next state
+        const allPlayersUpdated = activePlayers.map(player => {
+            const isByePlayer = byePlayers.some(bp => bp.id === player.id);
+            if (isByePlayer) return { ...player, advancedThisRound: true, status: 'playing' };
+            return { ...player, advancedThisRound: false, status: 'playing' }; // All others start as playing
+        });
+
+
+        // Initialize bracket structure
+        const bracket = [];
+        bracket.push({
+            roundNum: 1,
+            matches: initialRoundMatches.map(m => ({
+                id: m.id,
+                player1Id: m.player1.id,
+                player2Id: m.player2.id,
+                winnerId: null, // Initial state
+                status: 'active'
+            }))
+        });
 
         await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), {
           status: 'playing',
           currentRound: 1,
-          matches: initialMatches,
-          players: finalPlayersForRound1,
+          players: allPlayersUpdated, // Update players with their initial status (playing or bye)
+          matches: [], // Clear top-level matches, will use bracket structure
+          bracket: bracket, // Store the bracket structure
+          byePlayers: byePlayers.map(p => ({ id: p.id, name: p.name })), // Store explicit bye players for reference
         });
         setMessage('');
-        console.log("Game started! Initial matches created.");
+        console.log("Game started! Initial bracket and matches created.");
         setCurrentPage('tournament');
       } catch (error) {
         console.error("Error starting game:", error);
         setMessage('Failed to start game. ' + error.message);
       }
     };
+
 
     const handleLeaveGameInitiate = () => {
       if (isHost) {
@@ -566,12 +604,15 @@ const App = () => {
 
       try {
         if (isHost) {
+          // Delete all matches in subcollection
           const matchesSnapshot = await getDocs(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
           const deletePromises = matchesSnapshot.docs.map(d => deleteDoc(d.ref));
           await Promise.all(deletePromises);
+          // Delete the main game document
           await deleteDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId));
           console.log("Game deleted by host.");
         } else {
+          // Remove player from the players array
           const updatedPlayers = game.players.filter(player => player.id !== userId);
           await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), { players: updatedPlayers });
           console.log("Left the game.");
@@ -647,29 +688,29 @@ const App = () => {
     );
   };
 
-  // 10. TournamentGame Component
+  // TournamentGame Component
   const TournamentGame = () => {
-    const { db, userId, game, currentGameId, displayName, setCurrentGameId, setGame, setCurrentPage, finalWinner, setFinalWinner, showGameEndedModal, setShowGameEndedModal, isHost } = useFirebase();
-    const [matches, setMatches] = useState([]);
-    const [currentMatchId, setCurrentMatchId] = useState(null);
+    const { db, userId, game, currentGameId, displayName, setCurrentGameId, setGame, setCurrentPage, finalWinner, setFinalWinner, showGameEndedModal, setShowGameEndedModal, isHost: isHostFromContext } = useFirebase();
+    const [matches, setMatches] = useState([]); // All individual game matches for the current tournament
+    const [currentMatchId, setCurrentMatchId] = useState(null); // The specific match the current user is in
     const [message, setMessage] = useState('');
     const [gameResultMessage, setGameResultMessage] = useState('');
     const [showResetConfirmation, setShowResetConfirmation] = useState(false);
     const [showEndGameConfirmation, setShowEndGameConfirmation] = useState(false);
     const [showPlayerStatusModal, setShowPlayerStatusModal] = useState(false);
 
-    const currentAppId = hardcodedAppId; // Using the hardcoded appId
+    const currentAppId = hardcodedAppId;
     const currentPlayer = game?.players.find(p => p.id === userId);
-    // isHost is already available from context in this component
+    const isHost = isHostFromContext; // Use isHost from context
 
-    // Listen to all matches in the current game's subcollection
+    // Listen to all individual matches in the current game's subcollection
     useEffect(() => {
       if (db && currentGameId && game?.status === 'playing') {
         const matchesColRef = collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`);
         const q = query(matchesColRef);
 
         const unsubscribeMatches = onSnapshot(q, (snapshot) => {
-          const updatedMatches = snapshot.docs.map(doc => doc.data());
+          const updatedMatches = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })); // Include match ID
           setMatches(updatedMatches);
 
           // Find the current user's active match
@@ -682,29 +723,18 @@ const App = () => {
           console.error("Error listening to matches:", error);
         });
 
-        return () => unsubscribeMatches(); // Cleanup listener
+        return () => unsubscribeMatches();
       }
     }, [db, currentGameId, game?.status, userId]);
 
-    // Effect to resolve and display match results when moves are made
+    // Effect to resolve and display individual game results within a match
     useEffect(() => {
       if (db && currentGameId && currentMatchId) {
         const unsubscribeMatchResult = onSnapshot(doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId), async (matchSnap) => {
           if (!matchSnap.exists()) return;
 
           const matchData = matchSnap.data();
-          // Debugging log for current match data
-          console.log("Current Match Data for UI:", {
-              gamesPlayed: matchData.gamesPlayed,
-              gameHistoryLength: matchData.gameHistory?.length,
-              player1Move: matchData.player1.move,
-              player2Move: matchData.player2.move,
-              player1PendingMove: matchData.player1.pendingMove,
-              player2PendingMove: matchData.player2.pendingMove,
-              status: matchData.status
-          });
 
-          // Corrected Logic: Only proceed if both players have *new* pending moves
           if (matchData.player1.pendingMove && matchData.player2.pendingMove && matchData.status === 'active') {
             const p1Move = matchData.player1.pendingMove;
             const p2Move = matchData.player2.pendingMove;
@@ -713,9 +743,6 @@ const App = () => {
             let p1Score = matchData.player1.score;
             let p2Score = matchData.player2.score;
             let currentGamesPlayed = matchData.gamesPlayed + 1;
-
-            console.log(`Evaluating match: P1 Score: ${p1Score}, P2 Score: ${p2Score}, Games Played: ${currentGamesPlayed}`);
-
 
             if (p1Move === p2Move) {
               gameOutcomeMessage = "It's a tie!";
@@ -760,14 +787,14 @@ const App = () => {
               setGameResultMessage(`${matchData.player2.name} wins the match! Advancing...`);
             }
 
-            // Fix: Immediately clear pending moves when a game is resolved
+            // Update match document
             await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId), {
               'player1.score': p1Score,
               'player2.score': p2Score,
-              'player1.move': p1Move, // Set revealed move for temporary display
-              'player2.move': p2Move, // Set revealed move for temporary display
-              'player1.pendingMove': null, // CLEAR PENDING MOVE IMMEDIATELY
-              'player2.pendingMove': null, // CLEAR PENDING MOVE IMMEDIATELY
+              'player1.move': p1Move,
+              'player2.move': p2Move,
+              'player1.pendingMove': null,
+              'player2.pendingMove': null,
               gamesPlayed: currentGamesPlayed,
               gameHistory: newGameHistory,
               status: matchStatus,
@@ -775,7 +802,7 @@ const App = () => {
               loserId: matchLoserId,
             });
 
-            // This setTimeout now ONLY handles clearing the *revealed* moves for the next turn
+            // Clear revealed moves after a short delay for next turn
             setTimeout(async () => {
               if (matchStatus === 'active') {
                 await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId), {
@@ -788,7 +815,7 @@ const App = () => {
               setGameResultMessage('');
             }, 1500);
 
-            // Update main game document with player status if match finished
+            // Update player status in main game document if match finished
             if (matchStatus === 'finished' && matchWinnerId && matchLoserId) {
               const gameDocRef = doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId);
               const gameSnap = await getDoc(gameDocRef);
@@ -802,7 +829,18 @@ const App = () => {
                 }
                 return p;
               });
-              await updateDoc(gameDocRef, { players: updatedPlayers });
+
+              // Update the bracket with the match winner
+              const updatedBracket = [...gameData.bracket];
+              const currentRoundIndex = updatedBracket.findIndex(r => r.roundNum === matchData.round);
+              if (currentRoundIndex !== -1) {
+                  const matchInBracket = updatedBracket[currentRoundIndex].matches.find(m => m.id === currentMatchId);
+                  if (matchInBracket) {
+                      matchInBracket.winnerId = matchWinnerId;
+                  }
+              }
+
+              await updateDoc(gameDocRef, { players: updatedPlayers, bracket: updatedBracket });
             }
           }
         });
@@ -871,50 +909,84 @@ const App = () => {
 
       setMessage(`Starting Round ${currentRound + 1}...`);
       try {
+        // Clear previous round's individual matches subcollection for the next round's matches
         const prevMatchesSnapshot = await getDocs(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
         const deletePromises = prevMatchesSnapshot.docs.map(d => deleteDoc(d.ref));
         await Promise.all(deletePromises);
-        console.log("Previous round matches cleared.");
+        console.log("Previous round matches cleared from subcollection.");
+
 
         const shuffledPlayers = [...playersWhoAdvanced].sort(() => 0.5 - Math.random());
-        const nextRoundMatches = [];
+        const nextRoundBracketMatches = [];
         const playersForNextRoundUpdate = shuffledPlayers.map(p => ({ ...p, advancedThisRound: false }));
 
-        let byePlayer = null;
+        let byePlayersForNextRound = []; // Track byes for this specific round
+
         if (playersForNextRoundUpdate.length % 2 !== 0) {
-          byePlayer = playersForNextRoundUpdate.pop();
+          // Give a bye if odd number of players
+          const byePlayerIndex = Math.floor(Math.random() * playersForNextRoundUpdate.length);
+          const byePlayer = playersForNextRoundUpdate.splice(byePlayerIndex, 1)[0];
           if (byePlayer) {
-            byePlayer.advancedThisRound = true;
-            console.log(`${byePlayer.name} gets a bye this round.`);
+            byePlayersForNextRound.push({ ...byePlayer, advancedThisRound: true, status: 'playing' });
+            console.log(`${byePlayer.name} gets a bye in Round ${currentRound + 1}.`);
           }
         }
 
+        // Create new matches for the next round and store them in the subcollection
         for (let i = 0; i < playersForNextRoundUpdate.length; i += 2) {
           const player1 = playersForNextRoundUpdate[i];
           const player2 = playersForNextRoundUpdate[i + 1];
 
-          const matchRef = doc(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
-          const newMatchData = {
-            id: matchRef.id,
-            round: currentRound + 1,
-            player1: { id: player1.id, name: player1.name, score: 0, move: null, pendingMove: null, lastMoveTime: null },
-            player2: { id: player2.id, name: player2.name, score: 0, move: null, pendingMove: null, lastMoveTime: null },
-            status: 'active',
-            winnerId: null,
-            loserId: null,
-            gamesPlayed: 0,
-            gameHistory: [],
-          };
-          await setDoc(matchRef, newMatchData);
-          nextRoundMatches.push(matchRef.id);
+          if (player1 && player2) {
+            const matchRef = doc(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
+            const newMatchData = {
+              id: matchRef.id,
+              round: currentRound + 1,
+              player1: { id: player1.id, name: player1.name, score: 0, move: null, pendingMove: null, lastMoveTime: null },
+              player2: { id: player2.id, name: player2.name, score: 0, move: null, pendingMove: null, lastMoveTime: null },
+              status: 'active',
+              winnerId: null,
+              loserId: null,
+              gamesPlayed: 0,
+              gameHistory: [],
+            };
+            await setDoc(matchRef, newMatchData);
+            nextRoundBracketMatches.push({
+                id: newMatchData.id,
+                player1Id: newMatchData.player1.id,
+                player2Id: newMatchData.player2.id,
+                winnerId: null,
+                status: 'active'
+            });
+          }
         }
 
-        const finalPlayersForNextRound = byePlayer ? [...playersForNextRoundUpdate, byePlayer] : playersForNextRoundUpdate;
+        // Update the main game document's players and add new round to bracket
+        const gameDocRef = doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId);
+        const gameSnap = await getDoc(gameDocRef);
+        const gameData = gameSnap.data();
 
-        await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), {
+        const updatedPlayersForGame = gameData.players.map(p => {
+            // Reset advancedThisRound for all playing players for the new round
+            const isPlaying = playersWhoAdvanced.some(ap => ap.id === p.id);
+            if (isPlaying) {
+                const gotBye = byePlayersForNextRound.some(bp => bp.id === p.id);
+                return { ...p, advancedThisRound: gotBye, status: 'playing' }; // Set status to playing for winners/byes
+            }
+            return p; // Keep eliminated as eliminated
+        });
+
+        const updatedBracket = [...gameData.bracket];
+        updatedBracket.push({
+            roundNum: currentRound + 1,
+            matches: nextRoundBracketMatches,
+            byePlayers: byePlayersForNextRound.map(p => ({ id: p.id, name: p.name })), // Store explicit bye players for this round
+        });
+
+        await updateDoc(gameDocRef, {
           currentRound: currentRound + 1,
-          matches: nextRoundMatches,
-          players: finalPlayersForNextRound,
+          players: updatedPlayersForGame,
+          bracket: updatedBracket,
         });
 
         setMessage('');
@@ -933,18 +1005,24 @@ const App = () => {
       ? (currentMatch.player1.id === userId ? currentMatch.player1 : currentMatch.player2)
       : null;
 
-    const allCurrentRoundMatchesAreFinished = game?.matches?.every(matchId => {
-        const match = matches.find(m => m.id === matchId);
-        return match && match.status === 'finished';
+    // Check if all active matches in the current round of the bracket are finished
+    const currentRoundMatchesInBracket = game?.bracket.find(r => r.roundNum === game.currentRound)?.matches || [];
+    const allCurrentRoundMatchesAreFinished = currentRoundMatchesInBracket.every(bracketMatch => {
+        const fullMatchData = matches.find(m => m.id === bracketMatch.id);
+        return fullMatchData && fullMatchData.status === 'finished';
     }) || false;
-    const playersRemaining = game?.players.filter(p => p.status === 'playing').length || 0;
 
-    const scoreboardPlayers = game?.players
-      .filter(p => p.status === 'playing' || p.status === 'eliminated' || p.status === 'joined')
+    const playersStillInTournament = game?.players.filter(p => p.status === 'playing' || p.status === 'bye').length || 0;
+
+    const scoreboardPlayers = [...game?.players || []] // Create a copy to sort
+      .filter(p => p.status === 'playing' || p.status === 'eliminated' || p.status === 'joined' || p.status === 'bye')
       .sort((a, b) => {
-        if (a.status === 'playing' && b.status !== 'playing') return -1;
-        if (a.status !== 'playing' && b.status === 'playing') return 1;
-        return (b.wins || 0) - (a.wins || 0);
+        // Sort playing players first, then byes, then joined, then eliminated
+        const statusOrder = { 'playing': 0, 'bye': 1, 'joined': 2, 'eliminated': 3 };
+        if (statusOrder[a.status] !== statusOrder[b.status]) {
+            return statusOrder[a.status] - statusOrder[b.status];
+        }
+        return (b.wins || 0) - (a.wins || 0); // Then by wins
       });
 
     const disableChoiceButtons = self?.pendingMove !== null || currentMatch?.status !== 'active' || game?.status !== 'playing' || gameResultMessage !== '';
@@ -974,8 +1052,11 @@ const App = () => {
         await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), {
           status: 'lobby',
           currentRound: 0,
-          matches: [],
-          players: game.players.map(p => ({ ...p, status: 'joined', wins: 0, losses: 0, advancedThisRound: false })),
+          matches: [], // Clear matches array
+          bracket: [], // Clear bracket
+          byePlayers: [], // Clear bye players
+          players: game.players.map(p => ({ ...p, status: 'joined', wins: 0, losses: 0, advancedThisRound: false, pendingMove: null, revealedMove: null })),
+          finalWinner: null,
         });
         console.log("Game reset to lobby state by host.");
         setCurrentPage('gameLobby');
@@ -1023,22 +1104,118 @@ const App = () => {
       );
     }
 
+    // Bracket Visualization Component (nested here for easy access to game/matches)
+    const BracketVisualizer = ({ game, matches, userId }) => {
+        if (!game || !game.bracket || game.bracket.length === 0) {
+            return <p className="text-gray-400 mt-4">Bracket will appear here when the game starts.</p>;
+        }
+
+        const getPlayerNameById = (id) => {
+            return game.players.find(p => p.id === id)?.name || "Unknown Player";
+        };
+
+        const renderMatch = (match, roundNum) => {
+            const fullMatch = matches.find(m => m.id === match.id);
+            const player1Name = getPlayerNameById(match.player1Id);
+            const player2Name = getPlayerNameById(match.player2Id);
+            const isUserMatch = (match.player1Id === userId || match.player2Id === userId);
+            const statusClass = fullMatch?.status === 'finished' ? 'bg-green-600' : (isUserMatch ? 'bg-indigo-600' : 'bg-gray-700');
+            const winnerName = fullMatch?.winnerId ? getPlayerNameById(fullMatch.winnerId) : 'N/A';
+
+            return (
+                <div key={match.id} className={`flex flex-col items-center p-2 rounded-md shadow-md text-sm transition duration-300 ${statusClass} ${isUserMatch ? 'ring-2 ring-yellow-400' : ''}`}>
+                    <div className="font-bold">{player1Name}</div>
+                    <div className="text-xs">vs</div>
+                    <div className="font-bold">{player2Name}</div>
+                    <div className="mt-1 text-xs font-semibold">Status: {fullMatch?.status || 'Active'}</div>
+                    {fullMatch?.status === 'finished' && <div className="text-xs text-yellow-200">Winner: {winnerName}</div>}
+                    {fullMatch && fullMatch.gamesPlayed > 0 && (
+                        <div className="text-xs">Score: {fullMatch.player1.score}-{fullMatch.player2.score}</div>
+                    )}
+                </div>
+            );
+        };
+
+        const renderByePlayer = (byePlayer, roundNum) => {
+            const playerName = getPlayerNameById(byePlayer.id);
+            const isUserBye = byePlayer.id === userId;
+            return (
+                <div key={byePlayer.id} className={`flex flex-col items-center p-2 rounded-md shadow-md text-sm bg-blue-600 transition duration-300 ${isUserBye ? 'ring-2 ring-yellow-400' : ''}`}>
+                    <div className="font-bold">{playerName}</div>
+                    <div className="text-xs text-white">Gets a Bye!</div>
+                </div>
+            );
+        };
+
+        return (
+            <div className="flex flex-col md:flex-row justify-center items-stretch space-y-4 md:space-y-0 md:space-x-4 p-4 bg-gray-800 rounded-lg shadow-lg w-full max-w-full overflow-x-auto">
+                {game.bracket.map((round) => (
+                    <div key={round.roundNum} className="flex flex-col items-center space-y-4 min-w-[150px] md:min-w-[200px] border-r border-gray-600 last:border-r-0 pr-4">
+                        <h4 className="text-xl font-bold text-gray-200">Round {round.roundNum}</h4>
+                        <div className="flex flex-col space-y-2 w-full">
+                            {round.matches.map(match => renderMatch(match, round.roundNum))}
+                            {round.byePlayers && round.byePlayers.map(byePlayer => renderByePlayer(byePlayer, round.roundNum))}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        );
+    };
+
+
     return (
       <div className="flex flex-col items-center justify-center p-6 bg-white rounded-lg shadow-xl m-4 md:w-full lg:w-2/3 mx-auto relative overflow-hidden">
         <h2 className="text-4xl font-extrabold text-gray-900 mb-2">Tournament</h2>
         <p className="text-xl text-indigo-600 mb-6">Round: {game.currentRound}</p>
         <p className="text-lg text-gray-700 mb-4">You are: <span className="font-semibold text-xl">{displayName || 'Anonymous'}</span> (ID: <span className="text-sm font-mono text-gray-500">{userId}</span>)</p>
 
+        {/* This modal is handled at the App component level, not here directly */}
+        {/*
+        {game.status === 'finished' && (
+          <div className="absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+            <div className="bg-white p-8 rounded-lg shadow-2xl text-center animate-bounce-in">
+              <h3 className="text-5xl font-extrabold text-yellow-500 mb-4">🏆 Tournament Ended! 🏆</h3>
+              {finalWinner ? (
+                <p className="text-4xl font-bold text-green-700 mb-6">{finalWinner.name} is the Champion!</p>
+              ) : (
+                <p className="text-4xl font-bold text-gray-700 mb-6">No clear winner (e.g., game reset or all left).</p>
+              )}
+
+              {isHost && (
+                <button
+                  onClick={handleEndGameInitiate}
+                  className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition duration-300"
+                >
+                  End Game Completely
+                </button>
+              )}
+              {!isHost && (
+                <button
+                  onClick={() => {
+                    setCurrentGameId(null);
+                    setGame(null);
+                    setCurrentPage('home');
+                  }}
+                  className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition duration-300"
+                >
+                  Go Home
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+        */}
+
         {currentMatch ? (
           <div className="bg-gradient-to-br from-indigo-500 to-purple-600 text-white p-6 rounded-xl shadow-lg w-full max-w-md mb-6 transform hover:scale-105 transition duration-300">
-            <h3 className="text-2xl font-bold mb-3 text-center">Your Match</h3>
+            <h3 className="text-2xl font-bold mb-3 text-center">Your Current Match</h3>
             <p className="text-center text-sm mb-2">(Individual RPS games within this match)</p>
             <div className="flex justify-between items-center text-xl font-semibold mb-4">
               <span className="flex-1 text-center">{self.name} <br/> ({self.score})</span>
               <span className="mx-4 text-3xl">VS</span>
               <span className="flex-1 text-center">{opponent.name} <br/> ({opponent.score})</span>
             </div>
-            <p className="text-center text-sm mb-4">First to 3 wins the match!</p>
+            <p className="text-center text-sm mb-4">First to 3 games wins the match!</p>
 
             <div className="flex justify-around mt-4">
               {['rock', 'paper', 'scissors'].map((move) => (
@@ -1108,7 +1285,7 @@ const App = () => {
               {currentPlayer?.status === 'eliminated' ? (
                 "You have been eliminated from the tournament. Thanks for playing!"
               ) : currentPlayer?.advancedThisRound ? (
-                "You won your match! Waiting for the next round to start."
+                "You won your match! Waiting for the next round to start or for host action."
               ) : (
                 "Waiting for your match to be assigned or for the host to start the next round."
               )}
@@ -1123,7 +1300,12 @@ const App = () => {
           </div>
         )}
 
-        <div className="w-full max-w-lg bg-gray-50 p-6 rounded-lg shadow-inner mb-6">
+        {/* Tournament Bracket Visualizer */}
+        <h3 className="text-3xl font-extrabold text-gray-900 mb-4 mt-8">Tournament Bracket</h3>
+        <BracketVisualizer game={game} matches={matches} userId={userId} />
+
+
+        <div className="w-full max-w-lg bg-gray-50 p-6 rounded-lg shadow-inner mb-6 mt-8">
           <h3 className="text-2xl font-bold text-gray-800 mb-4 text-center">Tournament Scoreboard</h3>
           <ul className="space-y-3">
             {scoreboardPlayers.map(player => (
@@ -1141,7 +1323,7 @@ const App = () => {
           </ul>
         </div>
 
-        {isHost && allCurrentRoundMatchesAreFinished && playersRemaining > 1 && game.status === 'playing' && (
+        {isHost && allCurrentRoundMatchesAreFinished && playersStillInTournament > 1 && game.status === 'playing' && (
           <button
             onClick={handleNextRound}
             className="w-full max-w-xs p-4 rounded-md text-xl font-bold transition duration-300 bg-blue-600 hover:bg-blue-700 text-white shadow-lg mt-6"
@@ -1150,7 +1332,7 @@ const App = () => {
           </button>
         )}
 
-        {isHost && (playersRemaining === 1 || game.status === 'finished') && (
+        {isHost && (playersStillInTournament === 1 || game.status === 'finished') && (
             <button
               onClick={handleEndGameInitiate}
               className="w-full max-w-xs p-4 rounded-md text-xl font-bold transition duration-300 bg-red-600 hover:bg-red-700 text-white shadow-lg mt-6"
@@ -1159,7 +1341,7 @@ const App = () => {
             </button>
         )}
 
-        {!isHost && (playersRemaining === 1 || game.status === 'finished') && (
+        {!isHost && (playersStillInTournament === 1 || game.status === 'finished') && (
           <p className="mt-6 text-center text-lg text-gray-700">The tournament has ended. Waiting for the host to finalize the game.</p>
         )}
         <button
@@ -1203,13 +1385,9 @@ const App = () => {
   }; // End of TournamentGame component
 
   // Corrected App component return structure
-  // The App component itself should return JSX,
-  // and the entire content within the FirebaseContext.Provider must be valid JSX.
   return (
     <FirebaseContext.Provider value={{ db, auth, userId, displayName, isAuthReady, setCurrentPage, currentGameId, setCurrentGameId, game, setGame, finalWinner, setFinalWinner, showGameEndedModal, setShowGameEndedModal, isHost: game?.hostId === userId }}>
-      {/* This Fragment is essential to wrap all top-level elements returned by the App component */}
       <Fragment>
-        {/* Conditional rendering for different pages */}
         {currentPage === 'home' && <Home />}
         {currentPage === 'createGame' && <CreateGame />}
         {currentPage === 'joinGame' && <JoinGame />}
@@ -1230,16 +1408,18 @@ const App = () => {
               {game?.hostId === userId && (
                 <button
                   onClick={() => {
-                    // Call the App-level handleEndGameConfirm to clean up and go home
-                    // Need to ensure handleEndGameConfirm is accessible from here
-                    // For now, directly setting state, but should ideally call a function passed down
-                    // Or make handleEndGameConfirm part of the App component and ensure it's called correctly.
-                    // For simplicity, let's keep it direct for the modal's purpose.
+                    // This button in the global modal should trigger a full reset/delete.
+                    // To do this properly, the App component needs a way to trigger handleEndGameConfirm
+                    // For now, we replicate its core logic here for immediate user feedback.
+                    // A better approach would be to pass handleEndGameConfirm to the modal
+                    // or a dedicated reset function from App.
                     setCurrentGameId(null);
                     setGame(null);
                     setCurrentPage('home');
                     setShowGameEndedModal(false);
                     setFinalWinner(null); // Clear winner
+                    // Note: Actual deletion of game document/matches needs to be handled here
+                    // or by a function passed down from App's scope.
                   }}
                   className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition duration-300"
                 >
