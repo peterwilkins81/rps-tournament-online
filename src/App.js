@@ -1,4 +1,4 @@
-import React, { useState, useEffect, createContext, useContext } from 'react';
+import React, { useState, useEffect, createContext, useContext, Fragment } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, where, addDoc, deleteDoc, getDocs } from 'firebase/firestore';
@@ -704,6 +704,7 @@ const App = () => {
               status: matchData.status
           });
 
+          // Corrected Logic: Only proceed if both players have *new* pending moves
           if (matchData.player1.pendingMove && matchData.player2.pendingMove && matchData.status === 'active') {
             const p1Move = matchData.player1.pendingMove;
             const p2Move = matchData.player2.pendingMove;
@@ -713,7 +714,6 @@ const App = () => {
             let p2Score = matchData.player2.score;
             let currentGamesPlayed = matchData.gamesPlayed + 1;
 
-            // NEW LOG: Log scores and gamesPlayed right before determining winner
             console.log(`Evaluating match: P1 Score: ${p1Score}, P2 Score: ${p2Score}, Games Played: ${currentGamesPlayed}`);
 
 
@@ -760,11 +760,14 @@ const App = () => {
               setGameResultMessage(`${matchData.player2.name} wins the match! Advancing...`);
             }
 
+            // Fix: Immediately clear pending moves when a game is resolved
             await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId), {
               'player1.score': p1Score,
               'player2.score': p2Score,
-              'player1.move': p1Move,
-              'player2.move': p2Move,
+              'player1.move': p1Move, // Set revealed move for temporary display
+              'player2.move': p2Move, // Set revealed move for temporary display
+              'player1.pendingMove': null, // CLEAR PENDING MOVE IMMEDIATELY
+              'player2.pendingMove': null, // CLEAR PENDING MOVE IMMEDIATELY
               gamesPlayed: currentGamesPlayed,
               gameHistory: newGameHistory,
               status: matchStatus,
@@ -772,14 +775,12 @@ const App = () => {
               loserId: matchLoserId,
             });
 
-            // Clear moves and pending moves after a short delay for display
+            // This setTimeout now ONLY handles clearing the *revealed* moves for the next turn
             setTimeout(async () => {
-              if (matchStatus === 'active') { // Only reset if match is still active
+              if (matchStatus === 'active') {
                 await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId), {
                   'player1.move': null,
                   'player2.move': null,
-                  'player1.pendingMove': null,
-                  'player2.pendingMove': null,
                   'player1.lastMoveTime': null,
                   'player2.lastMoveTime': null,
                 });
@@ -1231,37 +1232,6 @@ const App = () => {
           matches={matches}
           currentUserId={userId}
         />
-      </div>
-    );
-  };
-
-  // Main render logic for App component
-  // Provides all necessary state and setters via FirebaseContext to children
-  return (
-    <FirebaseContext.Provider value={{
-      db, auth, userId, setUserId, displayName, setDisplayName,
-      isAuthReady, currentPage, setCurrentPage, currentGameId, setCurrentGameId, game, setGame,
-      finalWinner, setFinalWinner, showGameEndedModal, setShowGameEndedModal
-    }}>
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
-        {
-          (() => { // Conditional rendering based on currentPage state
-            switch (currentPage) {
-              case 'home':
-                return <Home />;
-              case 'createGame':
-                return <CreateGame />;
-              case 'joinGame':
-                return <JoinGame />;
-              case 'gameLobby':
-                return <GameLobby />;
-              case 'tournament':
-                return <TournamentGame />;
-              default:
-                return <Home />; // Fallback
-            }
-          })()
-        }
       </div>
     </FirebaseContext.Provider>
   );
