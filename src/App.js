@@ -57,14 +57,17 @@ const App = () => {
   // Firebase Initialization and Authentication
   useEffect(() => {
     try {
-      const appId = "1:453163680831:web:cb66974cb075122d5fe48a"; // Directly setting the provided appId
+      // Access global variables provided by the Canvas environment
+      const globalAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
+      const initialAuthToken = typeof window.__initial_auth_token !== 'undefined' ? window.__initial_auth_token : null;
+
       const firebaseConfig = {
         apiKey: "AIzaSyBni6_iiti4MytyRpfTh95SyC1LhyV9KF0",
         authDomain: "rps-tournament-online.firebaseapp.com",
         projectId: "rps-tournament-online",
         storageBucket: "rps-tournament-online.firebasestorage.app",
         messagingSenderId: "453163680831",
-        appId: appId // Using the variable
+        appId: globalAppId // Using the globalAppId variable
       };
 
       if (!firebaseConfig || Object.keys(firebaseConfig).length === 0 || !firebaseConfig.projectId || !firebaseConfig.apiKey) {
@@ -87,9 +90,9 @@ const App = () => {
         } else {
           console.log("Firebase Auth State Changed: No user, signing in anonymously.");
           try {
-            // Use __initial_auth_token if available (from Canvas environment), otherwise sign in anonymously
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-              await signInWithCustomToken(firebaseAuth, __initial_auth_token);
+            // Use initialAuthToken if available, otherwise sign in anonymously
+            if (initialAuthToken) {
+              await signInWithCustomToken(firebaseAuth, initialAuthToken);
             } else {
               await signInAnonymously(firebaseAuth);
             }
@@ -109,7 +112,7 @@ const App = () => {
   useEffect(() => {
     if (db && currentGameId) {
       // Access __app_id from the global scope if defined, otherwise use a default or your hardcoded ID
-      const currentAppId = typeof __app_id !== 'undefined' ? __app_id : "1:453163680831:web:cb66974cb075122d5fe48a"; // Fallback to your provided ID if __app_id isn't in scope
+      const currentAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : "1:453163680831:web:cb66974cb075122d5fe48a"; // Fallback to your provided ID if __app_id isn't in scope
       const gameDocRef = doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId);
       const unsubscribe = onSnapshot(gameDocRef, (docSnap) => {
         if (docSnap.exists()) {
@@ -175,7 +178,7 @@ const App = () => {
     const [name, setName] = useState('');
     const [creating, setCreating] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
-    const currentAppId = typeof __app_id !== 'undefined' ? __app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
+    const currentAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
 
     const handleCreateGame = async () => {
       if (!name.trim()) {
@@ -262,7 +265,7 @@ const App = () => {
     const [name, setName] = useState('');
     const [joining, setJoining] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
-    const currentAppId = typeof __app_id !== 'undefined' ? __app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
+    const currentAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
 
 
     const handleJoinGame = async () => {
@@ -367,7 +370,7 @@ const App = () => {
     const [message, setMessage] = useState('');
     const [showConfirmationModal, setShowConfirmationModal] = useState(false); // New state for modal
     const isHost = game && game.hostId === userId;
-    const currentAppId = typeof __app_id !== 'undefined' ? __app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
+    const currentAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
 
 
     const handleStartGame = async () => {
@@ -454,7 +457,7 @@ const App = () => {
         setMessage("Error: Cannot leave game. Missing data.");
         return;
       }
-      const currentAppId = typeof __app_id !== 'undefined' ? __app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
+      const currentAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
 
       try {
         if (isHost) {
@@ -557,7 +560,7 @@ const App = () => {
     const [showResetConfirmation, setShowResetConfirmation] = useState(false);
     const [showEndGameConfirmation, setShowEndGameConfirmation] = useState(false);
 
-    const currentAppId = typeof __app_id !== 'undefined' ? __app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
+    const currentAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
 
     const currentPlayer = game?.players.find(p => p.id === userId);
     const isHost = game?.hostId === userId;
@@ -866,7 +869,7 @@ const App = () => {
         setMessage("Error: Cannot reset game. Missing data.");
         return;
       }
-      const currentAppId = typeof __app_id !== 'undefined' ? __app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
+      const currentAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
 
       try {
         // Delete all matches in the subcollection first
@@ -903,7 +906,7 @@ const App = () => {
         setMessage("Error: Cannot end game. Missing data.");
         return;
       }
-      const currentAppId = typeof __app_id !== 'undefined' ? __app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
+      const currentAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
 
       try {
         // Delete all matches in the subcollection first
