@@ -55,6 +55,7 @@ const App = () => {
   const [userId, setUserId] = useState(null);
   const [displayName, setDisplayName] = useState('');
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [appId, setAppId] = useState(null);
   const [currentPage, setCurrentPage] = useState('home'); // 'home', 'createGame', 'joinGame', 'gameLobby', 'tournament'
   const [currentGameId, setCurrentGameId] = useState(null);
   const [game, setGame] = useState(null); // Current game data from Firestore
@@ -70,7 +71,7 @@ const App = () => {
   messagingSenderId: "453163680831",
   appId: "1:453163680831:web:cb66974cb075122d5fe48a"
 };
-const appId = firebaseConfig.appId;
+setAppId(actualFirebaseConfig.appId);
       if (!firebaseConfig || Object.keys(firebaseConfig).length === 0) {
         console.error("Firebase config is missing or empty. Please ensure __firebase_config is set.");
         return;
@@ -110,7 +111,7 @@ const appId = firebaseConfig.appId;
   // Effect to listen to game data when currentGameId changes
   useEffect(() => {
     if (db && currentGameId) {
-      const gameDocRef = doc(db, `artifacts/${appId}/public/data/games`, currentGameId);
+      const gameDocRef = doc(db, artifacts/${appId}/public/data/games, currentGameId);
       const unsubscribe = onSnapshot(gameDocRef, (docSnap) => {
         if (docSnap.exists()) {
           setGame(docSnap.data());
@@ -1076,7 +1077,7 @@ const appId = firebaseConfig.appId;
   return (
     <FirebaseContext.Provider value={{
       db, auth, userId, setUserId, displayName, setDisplayName,
-      isAuthReady, currentPage, setCurrentPage, currentGameId, setCurrentGameId, game, setGame
+      isAuthReady, appId, currentPage, setCurrentPage, currentGameId, setCurrentGameId, game, setGame
     }}>
       <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
         {
