@@ -9,9 +9,15 @@ const FirebaseContext = createContext(null);
 // Custom hook to use Firebase context
 const useFirebase = () => useContext(FirebaseContext);
 
-// Utility to generate a short, unique game code
+// Utility to generate a short, unique 5-letter game code
 const generateGameCode = () => {
-  return Math.random().toString(36).substring(2, 8).toUpperCase();
+  let result = '';
+  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const charactersLength = characters.length;
+  for (let i = 0; i < 5; i++) { // Generate 5 random uppercase letters
+    result += characters.charAt(Math.floor(Math.random() * charactersLength));
+  }
+  return result;
 };
 
 // Custom Confirmation Modal Component
@@ -338,11 +344,11 @@ const App = () => {
         />
         <input
           type="text"
-          placeholder="Game Code (e.g., ABCDEF)"
+          placeholder="Game Code (e.g., ABCDE)"
           value={code}
           onChange={(e) => setCode(e.target.value.toUpperCase())}
           className="w-full p-3 mb-4 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          maxLength="6"
+          maxLength="5" // Changed max length to 5
         />
         <button
           onClick={handleJoinGame}
@@ -557,6 +563,7 @@ const App = () => {
     const [matches, setMatches] = useState([]);
     const [currentMatchId, setCurrentMatchId] = useState(null); // The ID of the match this user is currently in
     const [message, setMessage] = useState('');
+    const [gameResultMessage, setGameResultMessage] = useState(''); // New state for temporary game result message
     const [showGameEndedModal, setShowGameEndedModal] = useState(false);
     const [finalWinner, setFinalWinner] = useState(null);
     const [showResetConfirmation, setShowResetConfirmation] = useState(false);
@@ -598,7 +605,7 @@ const App = () => {
               if (game.status !== 'finished') {
                 updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), { status: 'finished' });
               }
-            } else if (activePlayers.length === 0 && game.currentRound > 0) {
+            } else if (activePlayers.length === 0 && game.currentRound > 0 && !finalWinner) { // Only set no winner if no winner was previously found
               // All players eliminated, but no single winner (e.g., all left)
               setFinalWinner(null); // No specific winner
               setShowGameEndedModal(true);
@@ -614,7 +621,7 @@ const App = () => {
 
         return () => unsubscribe();
       }
-    }, [db, currentGameId, game?.status, game?.players]); // Depend on game.status to react to game ending
+    }, [db, currentGameId, game?.status, game?.players, finalWinner]); // Depend on finalWinner to react to game ending
 
     const handleMakeMove = async (move) => {
       if (!currentMatchId || !db || !userId) return;
@@ -666,50 +673,51 @@ const App = () => {
           if (matchData.player1.pendingMove && matchData.player2.pendingMove && matchData.status === 'active') {
             const p1Move = matchData.player1.pendingMove; // Use pendingMove for resolution
             const p2Move = matchData.player2.pendingMove; // Use pendingMove for resolution
-            let winnerOfGame = null; // Winner of this single RPS game
+            let winnerOfGameId = null; // Winner of this single RPS game
+            let gameOutcomeMessage = "";
             let p1Score = matchData.player1.score;
             let p2Score = matchData.player2.score;
             let currentGamesPlayed = matchData.gamesPlayed + 1;
 
             // Determine winner of the individual RPS game
             if (p1Move === p2Move) {
-              setMessage("It's a tie! Play again.");
+              gameOutcomeMessage = "It's a tie!";
             } else if (
               (p1Move === 'rock' && p2Move === 'scissors') ||
               (p1Move === 'paper' && p2Move === 'rock') ||
               (p1Move === 'scissors' && p2Move === 'paper')
             ) {
-              winnerOfGame = matchData.player1.id;
+              winnerOfGameId = matchData.player1.id;
               p1Score++;
-              setMessage(`${matchData.player1.name} wins this game!`);
+              gameOutcomeMessage = `${matchData.player1.name} won!`;
             } else {
-              winnerOfGame = matchData.player2.id;
+              winnerOfGameId = matchData.player2.id;
               p2Score++;
-              setMessage(`${matchData.player2.name} wins this game!`);
+              gameOutcomeMessage = `${matchData.player2.name} won!`;
             }
+
+            // Set a local state for the game result message for temporary display
+            setGameResultMessage(gameOutcomeMessage);
+            setMessage(''); // Clear any previous general message
 
             // Create game result record for history
             const gameResult = {
               gameNum: currentGamesPlayed,
               player1: { name: matchData.player1.name, move: p1Move },
               player2: { name: matchData.player2.name, move: p2Move },
-              winner: winnerOfGame ? (matchData.player1.id === winnerOfGame ? matchData.player1.name : matchData.player2.name) : 'Tie'
+              winner: winnerOfGameId ? (matchData.player1.id === winnerOfGameId ? matchData.player1.name : matchData.player2.name) : 'Tie'
             };
-
             const newGameHistory = [...(matchData.gameHistory || []), gameResult];
 
-            // Update scores and REVEAL moves, then reset pending moves for the next individual game
-            const updates = {
+            // Update match with revealed moves and scores, but keep pending moves until timeout clears them
+            // This allows the moves to be visually shown for a moment
+            const updatesAfterReveal = {
               'player1.score': p1Score,
               'player2.score': p2Score,
-              'player1.move': p1Move, // Reveal the move
-              'player2.move': p2Move, // Reveal the move
-              'player1.pendingMove': null, // Clear pending move
-              'player2.pendingMove': null, // Clear pending move
-              'player1.lastMoveTime': null, // Clear last move time after reveal
-              'player2.lastMoveTime': null,
+              'player1.move': p1Move, // Reveal this move
+              'player2.move': p2Move, // Reveal this move
               gamesPlayed: currentGamesPlayed,
-              gameHistory: newGameHistory, // Update game history
+              gameHistory: newGameHistory,
             };
 
             // Check if match winner (first to 3 games)
@@ -721,19 +729,39 @@ const App = () => {
               matchWinnerId = matchData.player1.id;
               matchLoserId = matchData.player2.id;
               matchStatus = 'finished';
-              setMessage(`${matchData.player1.name} wins the match! Advancing...`);
+              // Overwrite gameOutcomeMessage for the match end scenario if it's the final point
+              setGameResultMessage(`${matchData.player1.name} wins the match! Advancing...`);
             } else if (p2Score >= 3) {
               matchWinnerId = matchData.player2.id;
               matchLoserId = matchData.player1.id;
               matchStatus = 'finished';
-              setMessage(`${matchData.player2.name} wins the match! Advancing...`);
+              // Overwrite gameOutcomeMessage for the match end scenario if it's the final point
+              setGameResultMessage(`${matchData.player2.name} wins the match! Advancing...`);
             }
 
-            updates.status = matchStatus;
-            updates.winnerId = matchWinnerId;
-            updates.loserId = matchLoserId;
+            updatesAfterReveal.status = matchStatus;
+            updatesAfterReveal.winnerId = matchWinnerId;
+            updatesAfterReveal.loserId = matchLoserId;
 
-            await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId), updates);
+            await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId), updatesAfterReveal);
+
+            // Timeout to clear moves and pending moves after display
+            setTimeout(async () => {
+              const resetUpdates = {
+                'player1.move': null,
+                'player2.move': null,
+                'player1.pendingMove': null, // Clear pending move
+                'player2.pendingMove': null, // Clear pending move
+                'player1.lastMoveTime': null,
+                'player2.lastMoveTime': null,
+              };
+              // Only update these fields if the match is still active.
+              // If the match finished, we don't want to clear the winner/loser info.
+              if (matchStatus === 'active') {
+                await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId), resetUpdates);
+              }
+              setGameResultMessage(''); // Clear the displayed game result message
+            }, 1500); // Display for 1.5 seconds
 
             // If a match finishes, update player status in the main game document
             if (matchStatus === 'finished' && matchWinnerId && matchLoserId) {
@@ -743,7 +771,7 @@ const App = () => {
 
               const updatedPlayers = gameData.players.map(p => {
                 if (p.id === matchWinnerId) {
-                  return { ...p, advancedThisRound: true, status: 'playing', wins: (p.wins || 0) + 1 }; // Ensure winner stays 'playing'
+                  return { ...p, advancedThisRound: true, status: 'playing', wins: (p.wins || 0) + 1 };
                 } else if (p.id === matchLoserId) {
                   return { ...p, status: 'eliminated', losses: (p.losses || 0) + 1 };
                 }
@@ -876,6 +904,10 @@ const App = () => {
         if (a.status !== 'playing' && b.status === 'playing') return 1;
         return (b.wins || 0) - (a.wins || 0);
       });
+
+    // Determine if choice buttons should be disabled
+    const disableChoiceButtons = self?.pendingMove !== null || currentMatch?.status !== 'active' || game?.status !== 'playing' || gameResultMessage !== '';
+
 
     // Handle initiation of going back to lobby (host only)
     const handleBackToLobbyInitiate = () => {
@@ -1015,10 +1047,10 @@ const App = () => {
                 <button
                   key={move}
                   onClick={() => handleMakeMove(move)}
-                  disabled={self.pendingMove !== null || currentMatch.status !== 'active' || game.status !== 'playing'} // Disable if already made a pending move
+                  disabled={disableChoiceButtons} // Use the new disable state
                   className={`p-4 rounded-full text-4xl shadow-md transition duration-300 transform hover:scale-110
                     ${self.pendingMove === move ? 'bg-yellow-400' : 'bg-white text-indigo-700 hover:bg-gray-200'}
-                    ${self.pendingMove !== null || currentMatch.status !== 'active' || game.status !== 'playing' ? 'opacity-50 cursor-not-allowed' : ''}
+                    ${disableChoiceButtons ? 'opacity-50 cursor-not-allowed' : ''}
                   `}
                   title={`Play ${move}`}
                 >
@@ -1028,22 +1060,33 @@ const App = () => {
                 </button>
               ))}
             </div>
-            {/* Display logic for current player's move */}
-            {self.pendingMove ? (
-              <p className="text-center mt-4 text-xl font-semibold">You chose: <span className="capitalize">{self.pendingMove}</span> (Waiting for opponent)</p>
-            ) : self.move ? (
-              <p className="text-center mt-4 text-xl font-semibold">You played: <span className="capitalize">{self.move}</span> (Revealed)</p>
-            ) : (
-              <p className="text-center mt-4 text-xl font-semibold">Make your move!</p>
+
+            {gameResultMessage && (
+              <p className="text-center mt-4 text-2xl font-bold text-yellow-300 animate-fade-in-out">
+                {gameResultMessage}
+              </p>
             )}
 
-            {/* Display logic for opponent's move - improved to hide choice */}
-            {opponent.move && self.move ? ( /* Both moves revealed, show opponent's move */
-              <p className="text-center mt-2 text-xl font-semibold">{opponent.name} played: <span className="capitalize">{opponent.move}</span> (Revealed)</p>
-            ) : opponent.pendingMove ? ( /* Opponent has a pending move (meaning they chose), but we haven't revealed yet */
-              <p className="text-center mt-2 text-xl font-semibold">{opponent.name} has chosen! Waiting for reveal...</p>
-            ) : ( /* Opponent has not made a move yet */
-              <p className="text-center mt-2 text-xl font-semibold">Waiting for {opponent.name} to choose...</p>
+            {!gameResultMessage && (
+              <>
+                {/* Display logic for current player's move */}
+                {self.pendingMove ? (
+                  <p className="text-center mt-4 text-xl font-semibold">You chose: <span className="capitalize">{self.pendingMove}</span> (Waiting for opponent)</p>
+                ) : self.move ? (
+                  <p className="text-center mt-4 text-xl font-semibold">You played: <span className="capitalize">{self.move}</span> (Revealed)</p>
+                ) : (
+                  <p className="text-center mt-4 text-xl font-semibold">Make your move!</p>
+                )}
+
+                {/* Display logic for opponent's move - improved to hide choice */}
+                {opponent.move && self.move ? ( /* Both moves revealed, show opponent's move */
+                  <p className="text-center mt-2 text-xl font-semibold">{opponent.name} played: <span className="capitalize">{opponent.move}</span> (Revealed)</p>
+                ) : opponent.pendingMove ? ( /* Opponent has a pending move (meaning they chose), but we haven't revealed yet */
+                  <p className="text-center mt-2 text-xl font-semibold">{opponent.name} has chosen! Waiting for reveal...</p>
+                ) : ( /* Opponent has not made a move yet */
+                  <p className="text-center mt-2 text-xl font-semibold">Waiting for {opponent.name} to choose...</p>
+                )}
+              </>
             )}
 
             {/* Display individual game history for the current match */}
