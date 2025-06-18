@@ -111,7 +111,7 @@ setAppId(actualFirebaseConfig.appId);
   // Effect to listen to game data when currentGameId changes
   useEffect(() => {
     if (db && currentGameId) {
-      const gameDocRef = doc(db, artifacts/${appId}/public/data/games, currentGameId);
+      const gameDocRef = doc(db, `artifacts/${appId}/public/data/games`, currentGameId);
       const unsubscribe = onSnapshot(gameDocRef, (docSnap) => {
         if (docSnap.exists()) {
           setGame(docSnap.data());
