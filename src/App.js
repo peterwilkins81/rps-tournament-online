@@ -674,29 +674,44 @@ const App = () => {
     const playersArray = Object.values(game.players || {});
     const currentPlayer = game.players[userId];
     const opponent = playersArray.find(p => p.id !== userId) || playersArray.find(p => p.name !== currentPlayer?.name); // Fallback for opponent
-    const opponentId = Object.keys(game.players).find(id => id !== userId);
 
     const isCurrentPlayerChosen = currentPlayer?.pendingChoice !== null && currentPlayer?.pendingChoice !== undefined;
     const isRoundResolved = (opponent?.choice !== null && opponent?.choice !== undefined) && (currentPlayer?.choice !== null && currentPlayer?.choice !== undefined);
 
 
     const playerMoveDisplay = (player) => {
-      // If round is resolved, show the actual choice.
+      console.log(`--- PlayerMoveDisplay for: ${player.name} (ID: ${player.id === userId ? 'You' : 'Opponent'}) ---`);
+      console.log(`  isRoundResolved: ${isRoundResolved}`);
+      console.log(`  Player ID: ${player.id}`);
+      console.log(`  Current User ID: ${userId}`);
+      console.log(`  Player's Pending Choice: ${player.pendingChoice}`);
+      console.log(`  Player's Revealed Choice: ${player.choice}`);
+
+      // If the round is resolved, show the actual choice for BOTH players
       if (isRoundResolved) {
+        console.log(`  Round resolved, showing: ${player?.choice || 'N/A'}`);
         return player?.choice || 'N/A';
       }
-      // If player is current user and has chosen, show "Chosen!"
-      if (player.id === userId && player.pendingChoice) {
-        return 'Chosen!';
+
+      // If the player is the current user
+      if (player.id === userId) {
+        // If the current user has made a pending choice, show "Chosen!"
+        if (player.pendingChoice) {
+          console.log(`  You've chosen, round not resolved. Showing: Chosen!`);
+          return 'Chosen!';
+        }
+        console.log(`  You haven't chosen. Showing: Not Chosen`);
+        return 'Not Chosen'; // Current player hasn't chosen yet
+      } else {
+        // If the player is the opponent
+        // If opponent has made a pending choice, but round is not resolved yet, show "Waiting..."
+        if (player.pendingChoice) {
+          console.log(`  Opponent chosen, round not resolved. Showing: Waiting for reveal...`);
+          return 'Waiting for reveal...';
+        }
+        console.log(`  Opponent hasn't chosen. Showing: Not Chosen`);
+        return 'Not Chosen'; // Opponent hasn't chosen yet
       }
-      // If opponent, and round not resolved, show "Waiting..." or "Not Chosen"
-      if (player.id !== userId) {
-          if (player.pendingChoice) {
-              return 'Waiting for reveal...'; // Opponent has chosen, but not revealed yet
-          }
-          return 'Not Chosen'; // Opponent hasn't chosen yet
-      }
-      return 'Not Chosen'; // Current player hasn't chosen yet
     };
 
 
