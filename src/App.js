@@ -110,7 +110,7 @@ const appId = firebaseConfig.appId;
   // Effect to listen to game data when currentGameId changes
   useEffect(() => {
     if (db && currentGameId) {
-      const gameDocRef = doc(db, `artifacts/${__app_id}/public/data/games`, currentGameId);
+      const gameDocRef = doc(db, `artifacts/${appId}/public/data/games`, currentGameId);
       const unsubscribe = onSnapshot(gameDocRef, (docSnap) => {
         if (docSnap.exists()) {
           setGame(docSnap.data());
@@ -183,7 +183,7 @@ const appId = firebaseConfig.appId;
       setErrorMessage('');
       try {
         const newGameCode = generateGameCode();
-        const gameRef = doc(db, `artifacts/${__app_id}/public/data/games`, newGameCode);
+        const gameRef = doc(db, `artifacts/${appId}/public/data/games`, newGameCode);
 
         // Check if game code already exists (unlikely but possible)
         const gameSnap = await getDoc(gameRef);
@@ -272,7 +272,7 @@ const appId = firebaseConfig.appId;
       setJoining(true);
       setErrorMessage('');
       try {
-        const gameDocRef = doc(db, `artifacts/${__app_id}/public/data/games`, code.trim().toUpperCase());
+        const gameDocRef = doc(db, `artifacts/${appId}/public/data/games`, code.trim().toUpperCase());
         const gameSnap = await getDoc(gameDocRef);
 
         if (!gameSnap.exists()) {
@@ -387,7 +387,7 @@ const appId = firebaseConfig.appId;
           const player2 = nextRoundPlayers[i + 1];
 
           // Create a new match document in a subcollection
-          const matchRef = doc(collection(db, `artifacts/${__app_id}/public/data/games/${currentGameId}/matches`));
+          const matchRef = doc(collection(db, `artifacts/${appId}/public/data/games/${currentGameId}/matches`));
           const newMatchData = {
             id: matchRef.id,
             round: 1,
@@ -404,7 +404,7 @@ const appId = firebaseConfig.appId;
 
         const finalPlayersForRound1 = byePlayer ? [...nextRoundPlayers, byePlayer] : nextRoundPlayers;
 
-        await updateDoc(doc(db, `artifacts/${__app_id}/public/data/games`, currentGameId), {
+        await updateDoc(doc(db, `artifacts/${appId}/public/data/games`, currentGameId), {
           status: 'playing',
           currentRound: 1,
           matches: initialMatches, // Store match IDs for the current round
@@ -441,17 +441,17 @@ const appId = firebaseConfig.appId;
       try {
         if (isHost) {
           // Delete all matches in the subcollection first
-          const matchesSnapshot = await getDocs(collection(db, `artifacts/${__app_id}/public/data/games/${currentGameId}/matches`));
+          const matchesSnapshot = await getDocs(collection(db, `artifacts/${appId}/public/data/games/${currentGameId}/matches`));
           const deletePromises = matchesSnapshot.docs.map(d => deleteDoc(d.ref));
           await Promise.all(deletePromises);
 
           // Then delete the game document
-          await deleteDoc(doc(db, `artifacts/${__app_id}/public/data/games`, currentGameId));
+          await deleteDoc(doc(db, `artifacts/${appId}/public/data/games`, currentGameId));
           console.log("Game deleted by host.");
         } else {
           // If a player leaves, update the player list
           const updatedPlayers = game.players.filter(player => player.id !== userId);
-          await updateDoc(doc(db, `artifacts/${__app_id}/public/data/games`, currentGameId), { players: updatedPlayers });
+          await updateDoc(doc(db, `artifacts/${appId}/public/data/games`, currentGameId), { players: updatedPlayers });
           console.log("Left the game.");
         }
         setCurrentGameId(null);
@@ -546,7 +546,7 @@ const appId = firebaseConfig.appId;
     // Listen to all matches in the current game
     useEffect(() => {
       if (db && currentGameId && game?.status === 'playing') {
-        const matchesColRef = collection(db, `artifacts/${__app_id}/public/data/games/${currentGameId}/matches`);
+        const matchesColRef = collection(db, `artifacts/${appId}/public/data/games/${currentGameId}/matches`);
         const q = query(matchesColRef);
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -572,14 +572,14 @@ const appId = firebaseConfig.appId;
               setShowGameEndedModal(true);
               // Update game status to 'finished' in Firestore if it's not already
               if (game.status !== 'finished') {
-                updateDoc(doc(db, `artifacts/${__app_id}/public/data/games`, currentGameId), { status: 'finished' });
+                updateDoc(doc(db, `artifacts/${appId}/public/data/games`, currentGameId), { status: 'finished' });
               }
             } else if (activePlayers.length === 0 && game.currentRound > 0) {
               // All players eliminated, but no single winner (e.g., all left)
               setFinalWinner(null); // No specific winner
               setShowGameEndedModal(true);
               if (game.status !== 'finished') {
-                 updateDoc(doc(db, `artifacts/${__app_id}/public/data/games`, currentGameId), { status: 'finished' });
+                 updateDoc(doc(db, `artifacts/${appId}/public/data/games`, currentGameId), { status: 'finished' });
               }
             }
           }
@@ -596,7 +596,7 @@ const appId = firebaseConfig.appId;
       if (!currentMatchId || !db || !userId) return;
 
       setMessage('');
-      const matchDocRef = doc(db, `artifacts/${__app_id}/public/data/games/${currentGameId}/matches`, currentMatchId);
+      const matchDocRef = doc(db, `artifacts/${appId}/public/data/games/${currentGameId}/matches`, currentMatchId);
       const matchSnap = await getDoc(matchDocRef);
 
       if (!matchSnap.exists()) {
@@ -634,7 +634,7 @@ const appId = firebaseConfig.appId;
     // Effect to check match results when a match updates
     useEffect(() => {
       if (db && currentGameId && currentMatchId) {
-        const unsubscribe = onSnapshot(doc(db, `artifacts/${__app_id}/public/data/games/${currentGameId}/matches`, currentMatchId), async (matchSnap) => {
+        const unsubscribe = onSnapshot(doc(db, `artifacts/${appId}/public/data/games/${currentGameId}/matches`, currentMatchId), async (matchSnap) => {
           if (!matchSnap.exists()) return;
 
           const matchData = matchSnap.data();
@@ -694,11 +694,11 @@ const appId = firebaseConfig.appId;
             updates.winnerId = matchWinnerId;
             updates.loserId = matchLoserId;
 
-            await updateDoc(doc(db, `artifacts/${__app_id}/public/data/games/${currentGameId}/matches`, currentMatchId), updates);
+            await updateDoc(doc(db, `artifacts/${appId}/public/data/games/${currentGameId}/matches`, currentMatchId), updates);
 
             // If a match finishes, update player status in the main game document
             if (matchStatus === 'finished' && matchWinnerId && matchLoserId) {
-              const gameDocRef = doc(db, `artifacts/${__app_id}/public/data/games`, currentGameId);
+              const gameDocRef = doc(db, `artifacts/${appId}/public/data/games`, currentGameId);
               const gameSnap = await getDoc(gameDocRef);
               const gameData = gameSnap.data();
 
@@ -734,7 +734,7 @@ const appId = firebaseConfig.appId;
         setMessage(`Tournament Winner: ${playersInCurrentRound[0].name}!`);
         setFinalWinner(playersInCurrentRound[0]);
         setShowGameEndedModal(true);
-        await updateDoc(doc(db, `artifacts/${__app_id}/public/data/games`, currentGameId), {
+        await updateDoc(doc(db, `artifacts/${appId}/public/data/games`, currentGameId), {
           status: 'finished',
         });
         return;
@@ -747,7 +747,7 @@ const appId = firebaseConfig.appId;
       setMessage(`Starting Round ${currentRound + 1}...`);
       try {
         // Clear previous round's matches
-        const prevMatchesSnapshot = await getDocs(collection(db, `artifacts/${__app_id}/public/data/games/${currentGameId}/matches`));
+        const prevMatchesSnapshot = await getDocs(collection(db, `artifacts/${appId}/public/data/games/${currentGameId}/matches`));
         const deletePromises = prevMatchesSnapshot.docs.map(d => deleteDoc(d.ref));
         await Promise.all(deletePromises);
         console.log("Previous round matches cleared.");
@@ -771,7 +771,7 @@ const appId = firebaseConfig.appId;
           const player1 = nextRoundPlayers[i];
           const player2 = nextRoundPlayers[i + 1];
 
-          const matchRef = doc(collection(db, `artifacts/${__app_id}/public/data/games/${currentGameId}/matches`));
+          const matchRef = doc(collection(db, `artifacts/${appId}/public/data/games/${currentGameId}/matches`));
           const newMatchData = {
             id: matchRef.id,
             round: currentRound + 1,
@@ -788,7 +788,7 @@ const appId = firebaseConfig.appId;
 
         const finalPlayersForNextRound = byePlayer ? [...nextRoundPlayers, byePlayer] : nextRoundPlayers;
 
-        await updateDoc(doc(db, `artifacts/${__app_id}/public/data/games`, currentGameId), {
+        await updateDoc(doc(db, `artifacts/${appId}/public/data/games`, currentGameId), {
           currentRound: currentRound + 1,
           matches: nextRoundMatches,
           players: finalPlayersForNextRound, // Update players list for next round
@@ -850,12 +850,12 @@ const appId = firebaseConfig.appId;
 
       try {
         // Delete all matches in the subcollection first
-        const matchesSnapshot = await getDocs(collection(db, `artifacts/${__app_id}/public/data/games/${currentGameId}/matches`));
+        const matchesSnapshot = await getDocs(collection(db, `artifacts/${appId}/public/data/games/${currentGameId}/matches`));
         const deletePromises = matchesSnapshot.docs.map(d => deleteDoc(d.ref));
         await Promise.all(deletePromises);
 
         // Reset game status and player states in main game document
-        await updateDoc(doc(db, `artifacts/${__app_id}/public/data/games`, currentGameId), {
+        await updateDoc(doc(db, `artifacts/${appId}/public/data/games`, currentGameId), {
           status: 'lobby',
           currentRound: 0,
           matches: [],
@@ -886,12 +886,12 @@ const appId = firebaseConfig.appId;
 
       try {
         // Delete all matches in the subcollection first
-        const matchesSnapshot = await getDocs(collection(db, `artifacts/${__app_id}/public/data/games/${currentGameId}/matches`));
+        const matchesSnapshot = await getDocs(collection(db, `artifacts/${appId}/public/data/games/${currentGameId}/matches`));
         const deletePromises = matchesSnapshot.docs.map(d => deleteDoc(d.ref));
         await Promise.all(deletePromises);
 
         // Delete the game document itself
-        await deleteDoc(doc(db, `artifacts/${__app_id}/public/data/games`, currentGameId));
+        await deleteDoc(doc(db, `artifacts/${appId}/public/data/games`, currentGameId));
         console.log("Game deleted after ending.");
         setCurrentGameId(null);
         setGame(null);
