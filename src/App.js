@@ -836,6 +836,13 @@ const App = () => {
       ? (currentMatch.player1.id === userId ? currentMatch.player1 : currentMatch.player2)
       : null;
 
+    // --- Start Debugging Logs for TournamentGame Render ---
+    console.log("--- TournamentGame Render Debug ---");
+    console.log("Current Match:", currentMatch);
+    console.log("Self (current user's perspective):", self);
+    console.log("Opponent (current user's perspective):", opponent);
+    // --- End Debugging Logs for TournamentGame Render ---
+
     const allMatchesFinished = game?.matches?.every(matchId => {
       const match = matches.find(m => m.id === matchId);
       return match && match.status === 'finished';
@@ -1006,20 +1013,21 @@ const App = () => {
                 </button>
               ))}
             </div>
-            {/* Display logic based on pendingMove and revealed move */}
+            {/* Display logic for current player's move */}
             {self.pendingMove ? (
-              <p className="text-center mt-4 text-xl font-semibold">You played: <span className="capitalize">{self.pendingMove}</span> (Waiting for opponent)</p>
+              <p className="text-center mt-4 text-xl font-semibold">You chose: <span className="capitalize">{self.pendingMove}</span> (Waiting for opponent)</p>
             ) : self.move ? (
               <p className="text-center mt-4 text-xl font-semibold">You played: <span className="capitalize">{self.move}</span> (Revealed)</p>
             ) : (
               <p className="text-center mt-4 text-xl font-semibold">Make your move!</p>
             )}
 
-            {opponent.pendingMove ? (
-              <p className="text-center mt-2 text-xl font-semibold">{opponent.name} has chosen! (Waiting for reveal)</p>
-            ) : opponent.move ? (
+            {/* Display logic for opponent's move - improved to hide choice */}
+            {opponent.move && self.move ? ( /* Both moves revealed, show opponent's move */
               <p className="text-center mt-2 text-xl font-semibold">{opponent.name} played: <span className="capitalize">{opponent.move}</span> (Revealed)</p>
-            ) : (
+            ) : opponent.pendingMove ? ( /* Opponent has a pending move (meaning they chose), but we haven't revealed yet */
+              <p className="text-center mt-2 text-xl font-semibold">{opponent.name} has chosen! Waiting for reveal...</p>
+            ) : ( /* Opponent has not made a move yet */
               <p className="text-center mt-2 text-xl font-semibold">Waiting for {opponent.name} to choose...</p>
             )}
 
