@@ -359,12 +359,24 @@ const App = () => {
     }
 
     const gameDocRef = doc(db, `artifacts/${appId}/public/data/games`, currentGameId);
+    const updatedPlayers = { ...game.players };
+
+    // Reset choices and pending choices for all players before starting
+    Object.keys(updatedPlayers).forEach(pId => {
+      updatedPlayers[pId].choice = null;
+      updatedPlayers[pId].pendingChoice = null;
+    });
+
     try {
       await updateDoc(gameDocRef, {
         status: 'started',
+        players: updatedPlayers, // Update players with reset choices
+        currentRound: 1, // Ensure starting at round 1 if not already
+        history: [], // Clear history for a fresh start
+        scores: {}, // Clear scores for a fresh start
         lastUpdated: serverTimestamp(),
       });
-      console.log("Game started!");
+      console.log("Game started with choices reset!");
       setCurrentPage('game');
     } catch (error) {
       console.error("Error starting game:", error);
