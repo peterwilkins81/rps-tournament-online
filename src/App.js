@@ -599,44 +599,30 @@ const App = () => {
       }
     }, [db, currentGameId, game?.status, game?.players]); // Depend on game.status to react to game ending
 
-    const handleMakeMove = async (move) => {
-      if (!currentMatchId || !db || !userId) return;
+    const handlemakemove = async (move) => {
+  if (!db || !currentGameId || !userId || !game || game.status !== 'started' || game.currentRound >= game.rounds) {
+    console.warn("Cannot make move: Game not ready or not started.");
+    return;
+  }
 
-      setMessage('');
-      const matchDocRef = doc(db, `artifacts/${appId}/public/data/games/${currentGameId}/matches`, currentMatchId);
-      const matchSnap = await getDoc(matchDocRef);
+  const gameDocRef = doc(db, `artifacts/${appId}/public/data/games`, currentGameId);
+  const players = { ...game.players };
 
-      if (!matchSnap.exists()) {
-        setMessage('Error: Match not found.');
-        return;
-      }
+  // Store choice as pending for the current user
+  if (players[userId]) {
+    players[userId].pendingChoice = move;
+  }
 
-      const matchData = matchSnap.data();
-      const isPlayer1 = matchData.player1.id === userId;
-
-      let updateData = {};
-      if (isPlayer1) {
-        if (matchData.player1.move) {
-          setMessage("You've already made your move for this round.");
-          return;
-        }
-        updateData = { 'player1.move': move, 'player1.lastMoveTime': Date.now() };
-      } else {
-        if (matchData.player2.move) {
-          setMessage("You've already made your move for this round.");
-          return;
-        }
-        updateData = { 'player2.move': move, 'player2.lastMoveTime': Date.now() };
-      }
-
-      try {
-        await updateDoc(matchDocRef, updateData);
-        setMessage('Move submitted! Waiting for opponent...');
-      } catch (error) {
-        console.error("Error making move:", error);
-        setMessage('Failed to submit move.');
-      }
-    };
+  try {
+    await updateDoc(gameDocRef, {
+      players: players,
+      lastUpdated: serverTimestamp(),
+    });
+    console.log(`Player ${userId} made a pending move: ${move}`);
+  } catch (error) {
+    console.error("Error making move:", error);
+  }
+};
 
     // Effect to check match results when a match updates
     useEffect(() => {
@@ -725,6 +711,139 @@ const App = () => {
       }
     }, [db, currentGameId, currentMatchId, userId]);
 
+    // useEffect to manage game state changes and round resolution
+    useEffect(() => {
+      // Ensure we have all necessary data and the game is started
+      if (!db || !currentGameId || !game || game.status !== 'started') {
+        return; // Exit early if game is not ready or not started
+      }
+
+      // --- The 'resolveRound' async function will go here ---
+      const resolveRound = async () => {
+    const gameDocRef = doc(db, `artifacts/${appId}/public/data/games`, currentGameId);
+    // Create a mutable copy of players from the current game state
+    const players = { ...game.players };
+
+    // Identify active player IDs (players who have a name)
+    const playerIds = Object.keys(players).filter(id => players[id].name);
+
+    // Check if all active players have made a pending choice
+    const allPlayersChosen = playerIds.length > 0 && playerIds.every(id => players[id] && players[id].pendingChoice);
+
+    // Only proceed if all players have made a pending choice
+    if (allPlayersChosen) {
+      console.log("All players have made their choices. Resolving round...");
+
+      // Assign player 1 and player 2 based on the order of playerIds
+      // Assuming 2 players for a standard game
+      let p1Id = playerIds[0];
+      let p2Id = playerIds[1];
+
+      let p1Choice = players[p1Id]?.pendingChoice;
+      let p2Choice = players[p2Id]?.pendingChoice;
+
+      let roundWinnerId = null;
+      let newScores = { ...game.scores }; // Copy current scores
+      let newHistory = [...(game.history || [])]; // Copy current history
+
+      // Only determine winner if both choices are present
+      if (p1Choice && p2Choice) {
+        const result = determineWinner(p1Choice, p2Choice); // Use the helper function
+
+        if (result === 'player1') {
+          roundWinnerId = p1Id;
+          newScores[p1Id] = (newScores[p1Id] || 0) + 1; // Increment p1's score
+          console.log(`${players[p1Id].name} wins the round!`);
+        } else if (result === 'player2') {
+          roundWinnerId = p2Id;
+          newScores[p2Id] = (newScores[p2Id] || 0) + 1; // Increment p2's score
+          console.log(`${players[p2Id].name} wins the round!`);
+        } else {
+          console.log("It's a tie!");
+        }
+
+        // Reveal choices by moving from pendingChoice to choice, and clear pendingChoice
+        players[p1Id].choice = p1Choice;
+        players[p2Id].choice = p2Choice;
+        players[p1Id].pendingChoice = null;
+        players[p2Id].pendingChoice = null;
+
+        // Record this round's details in the game history
+        newHistory.push({
+          round: game.currentRound,
+          players: {
+            [p1Id]: { name: players[p1Id].name, choice: p1Choice },
+            [p2Id]: { name: players[p2Id].name, choice: p2Choice }
+          },
+          winner: roundWinnerId ? players[roundWinnerId].name : 'Tie',
+          scores: { ...newScores } // Record scores at the end of this round
+        });
+
+      } else {
+        console.warn("One or more players did not make a choice for this round. Not resolving.");
+        return; // Don't proceed with resolving if choices are missing
+      }
+
+      let newCurrentRound = game.currentRound + 1;
+      let newStatus = game.status;
+      let finalWinnerId = null; // To store the tournament winner
+
+      // Check if the game has reached its total number of rounds
+      if (newCurrentRound > game.rounds) {
+        newStatus = 'ended';
+        // Logic to determine the overall tournament winner
+        const finalScores = newScores;
+        const scoresArray = Object.entries(finalScores).sort(([, scoreA], [, scoreB]) => scoreB - scoreA); // Sort players by score
+
+        if (scoresArray.length > 0 && scoresArray[0][1] > (scoresArray[1]?.[1] || -1)) {
+          finalWinnerId = scoresArray[0][0]; // Player with the uniquely highest score
+        } else if (scoresArray.length > 1 && scoresArray[0][1] === scoresArray[1][1]) {
+            finalWinnerId = 'Tie'; // Top scores are equal, so it's a tie
+        }
+        console.log("Game has ended. Final winner:", finalWinnerId ? players[finalWinnerId].name : "None");
+      }
+
+      try {
+        // Update the Firestore document with the new game state
+        await updateDoc(gameDocRef, {
+          players: players, // Updated players with revealed choices and cleared pending moves
+          scores: newScores,
+          history: newHistory,
+          currentRound: newCurrentRound,
+          status: newStatus,
+          winner: finalWinnerId, // Set the overall game winner if applicable
+          lastUpdated: serverTimestamp(),
+        });
+
+        console.log(`Round ${game.currentRound} resolved. Next round: ${newCurrentRound}`);
+
+      } catch (error) {
+        console.error("Error resolving round:", error);
+      }
+    }
+  };
+
+      // --- The 'determineWinner' helper function will go here ---
+      // Helper to determine round winner based on Rock, Paper, Scissors rules
+  const determineWinner = (choice1, choice2) => {
+    if (choice1 === choice2) return 'tie'; // If choices are the same, it's a tie
+    if (
+      (choice1 === 'rock' && choice2 === 'scissors') || // Rock beats Scissors
+      (choice1 === 'paper' && choice2 === 'rock') ||    // Paper beats Rock
+      (choice1 === 'scissors' && choice2 === 'paper')   // Scissors beats Paper
+    ) {
+      return 'player1'; // First player wins
+    }
+    return 'player2'; // Second player wins
+  };
+
+      // Trigger resolveRound if the game object has players and any pending choices are made
+      // This will run when 'game' object updates from Firebase
+      if (Object.keys(game.players || {}).length > 0 && Object.values(game.players).some(p => p.pendingChoice)) {
+         resolveRound();
+      }
+
+    }, [game, db, currentGameId, userId, appId]); // Dependencies: Re-run when these values change
 
     // Host-specific logic to advance to the next round
     const handleNextRound = async () => {
