@@ -127,27 +127,29 @@ const App = () => {
   const [finalWinner, setFinalWinner] = useState(null);
   const [showGameEndedModal, setShowGameEndedModal] = useState(false);
 
+  // Hardcoded Firebase Config and AppId
+  const hardcodedFirebaseConfig = {
+    apiKey: "AIzaSyBni6_iiti4MytyRpfTh95SyC1LhyV9KF0",
+    authDomain: "rps-tournament-online.firebaseapp.com",
+    projectId: "rps-tournament-online",
+    storageBucket: "rps-tournament-online.firebasestorage.app",
+    messagingSenderId: "453163680831",
+    appId: "1:453163680831:web:cb66974cb075122d5fe48a" // This is your specific appId
+  };
+  const hardcodedAppId = hardcodedFirebaseConfig.appId;
+
+
   // Firebase Initialization and Authentication - Runs once on component mount
   useEffect(() => {
     try {
-      // Hardcoded Firebase Config as requested
-      const firebaseConfig = {
-        apiKey: "AIzaSyBni6_iiti4MytyRpfTh95SyC1LhyV9KF0",
-        authDomain: "rps-tournament-online.firebaseapp.com",
-        projectId: "rps-tournament-online",
-        storageBucket: "rps-tournament-online.firebasestorage.app",
-        messagingSenderId: "453163680831",
-        appId: "1:453163680831:web:cb66974cb075122d5fe48a"
-      };
-
       // Essential check to ensure Firebase configuration is valid
-      if (!firebaseConfig || Object.keys(firebaseConfig).length === 0 || !firebaseConfig.projectId || !firebaseConfig.apiKey) {
+      if (!hardcodedFirebaseConfig || Object.keys(hardcodedFirebaseConfig).length === 0 || !hardcodedFirebaseConfig.projectId || !hardcodedFirebaseConfig.apiKey) {
         console.error("Firebase config is missing or empty. Please ensure all Firebase credentials are correct.");
         return; // Prevent initialization with invalid config
       }
 
       // Initialize Firebase app and get service instances
-      const app = initializeApp(firebaseConfig);
+      const app = initializeApp(hardcodedFirebaseConfig);
       const firestore = getFirestore(app);
       const firebaseAuth = getAuth(app);
 
@@ -165,7 +167,6 @@ const App = () => {
           console.log("Firebase Auth State Changed: No user, attempting anonymous sign-in.");
           try {
             // Since config is hardcoded, we default to anonymous sign-in here.
-            // If you need custom token sign-in, you'd need a different mechanism to provide the token.
             await signInAnonymously(firebaseAuth);
             console.log("Signed in anonymously.");
           } catch (authError) {
@@ -185,9 +186,8 @@ const App = () => {
   // Effect to listen to game data when currentGameId changes
   useEffect(() => {
     if (db && currentGameId) {
-      // With hardcoded config, appId is directly available
-      const currentAppId = "1:453163680831:web:cb66974cb075122d5fe48a"; // Hardcoded appId
-      const gameDocRef = doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId);
+      // Using the hardcoded appId here
+      const gameDocRef = doc(db, `artifacts/${hardcodedAppId}/public/data/games`, currentGameId);
 
       const unsubscribeGame = onSnapshot(gameDocRef, (docSnap) => {
         if (docSnap.exists()) {
@@ -204,7 +204,7 @@ const App = () => {
                 setFinalWinner(potentialWinner);
                 setShowGameEndedModal(true);
                 if (latestGameData.status !== 'finished') {
-                  updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), { status: 'finished' });
+                  updateDoc(doc(db, `artifacts/${hardcodedAppId}/public/data/games`, currentGameId), { status: 'finished' });
                 }
               }
             } else if (activePlayers.length === 0 && latestGameData.currentRound > 0) {
@@ -212,7 +212,7 @@ const App = () => {
               setFinalWinner(null);
               setShowGameEndedModal(true);
               if (latestGameData.status !== 'finished') {
-                updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), { status: 'finished' });
+                updateDoc(doc(db, `artifacts/${hardcodedAppId}/public/data/games`, currentGameId), { status: 'finished' });
               }
             }
           }
@@ -291,8 +291,8 @@ const App = () => {
     const [name, setName] = useState('');
     const [creating, setCreating] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
-    // With hardcoded config, appId is directly available
-    const currentAppId = "1:453163680831:web:cb66974cb075122d5fe48a"; // Hardcoded appId
+    // Using the hardcoded appId
+    const currentAppId = hardcodedAppId; 
 
     useEffect(() => {
       console.log("CreateGame component rendered.");
@@ -382,8 +382,8 @@ const App = () => {
     const [name, setName] = useState('');
     const [joining, setJoining] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
-    // With hardcoded config, appId is directly available
-    const currentAppId = "1:453163680831:web:cb66974cb075122d5fe48a"; // Hardcoded appId
+    // Using the hardcoded appId
+    const currentAppId = hardcodedAppId; 
 
     const handleJoinGame = async () => {
       if (!name.trim()) {
@@ -483,8 +483,8 @@ const App = () => {
     const [message, setMessage] = useState('');
     const [showConfirmationModal, setShowConfirmationModal] = useState(false);
     const isHost = game && game.hostId === userId;
-    // With hardcoded config, appId is directly available
-    const currentAppId = "1:453163680831:web:cb66974cb075122d5fe48a"; // Hardcoded appId
+    // Using the hardcoded appId
+    const currentAppId = hardcodedAppId; 
 
     const handleStartGame = async () => {
       if (!game || !db || !currentGameId) return;
@@ -562,7 +562,7 @@ const App = () => {
         setMessage("Error: Cannot leave game. Missing data.");
         return;
       }
-      const currentAppId = "1:453163680831:web:cb66974cb075122d5fe48a"; // Hardcoded appId
+      const currentAppId = hardcodedAppId; // Using the hardcoded appId
 
       try {
         if (isHost) {
@@ -658,7 +658,7 @@ const App = () => {
     const [showEndGameConfirmation, setShowEndGameConfirmation] = useState(false);
     const [showPlayerStatusModal, setShowPlayerStatusModal] = useState(false);
 
-    const currentAppId = "1:453163680831:web:cb66974cb075122d5fe48a"; // Hardcoded appId
+    const currentAppId = hardcodedAppId; // Using the hardcoded appId
     const currentPlayer = game?.players.find(p => p.id === userId);
     const isHost = game?.hostId === userId;
 
@@ -712,6 +712,10 @@ const App = () => {
             let p1Score = matchData.player1.score;
             let p2Score = matchData.player2.score;
             let currentGamesPlayed = matchData.gamesPlayed + 1;
+
+            // NEW LOG: Log scores and gamesPlayed right before determining winner
+            console.log(`Evaluating match: P1 Score: ${p1Score}, P2 Score: ${p2Score}, Games Played: ${currentGamesPlayed}`);
+
 
             if (p1Move === p2Move) {
               gameOutcomeMessage = "It's a tie!";
@@ -959,7 +963,7 @@ const App = () => {
         setMessage("Error: Cannot reset game. Missing data.");
         return;
       }
-      const currentAppId = "1:453163680831:web:cb66974cb075122d5fe48a"; // Hardcoded appId
+      const currentAppId = hardcodedAppId; // Using the hardcoded appId
 
       try {
         const matchesSnapshot = await getDocs(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
@@ -993,7 +997,7 @@ const App = () => {
         setMessage("Error: Cannot end game. Missing data.");
         return;
       }
-      const currentAppId = "1:453163680831:web:cb66974cb075122d5fe48a"; // Hardcoded appId
+      const currentAppId = hardcodedAppId; // Using the hardcoded appId
 
       try {
         const matchesSnapshot = await getDocs(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
@@ -1061,7 +1065,7 @@ const App = () => {
         {currentMatch ? (
           <div className="bg-gradient-to-br from-indigo-500 to-purple-600 text-white p-6 rounded-xl shadow-lg w-full max-w-md mb-6 transform hover:scale-105 transition duration-300">
             <h3 className="text-2xl font-bold mb-3 text-center">Your Match</h3>
-            <p className="text-center text-sm mb-2">(Individual RPS games within this match)</p> {/* Added clarification */}
+            <p className="text-center text-sm mb-2">(Individual RPS games within this match)</p>
             <div className="flex justify-between items-center text-xl font-semibold mb-4">
               <span className="flex-1 text-center">{self.name} <br/> ({self.score})</span>
               <span className="mx-4 text-3xl">VS</span>
@@ -1116,7 +1120,7 @@ const App = () => {
 
             {currentMatch.gameHistory && currentMatch.gameHistory.length > 0 && (
               <div className="mt-6 bg-purple-700 p-4 rounded-lg shadow-md">
-                <h4 className="text-xl font-semibold mb-3 text-white">Individual Game Results: <span className="text-sm font-normal">(Total: {currentMatch.gamesPlayed})</span></h4> {/* Added total games count */}
+                <h4 className="text-xl font-semibold mb-3 text-white">Individual Game Results: <span className="text-sm font-normal">(Total: {currentMatch.gamesPlayed})</span></h4>
                 <ul className="space-y-2">
                   {currentMatch.gameHistory.map((gameRec, index) => (
                     <li key={index} className="flex flex-col items-start bg-purple-800 p-3 rounded-md text-sm text-gray-100">
