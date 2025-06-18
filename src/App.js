@@ -2,6 +2,7 @@ import React, { useState, useEffect, createContext, useContext, Fragment } from 
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, where, addDoc, deleteDoc, getDocs } from 'firebase/firestore';
+import { serverTimestamp } from 'firebase/firestore'; // Import serverTimestamp
 
 // 1. Firebase Context for global access to DB, Auth, and user state
 const FirebaseContext = createContext(null);
@@ -128,6 +129,7 @@ const App = () => {
   const [game, setGame] = useState(null);
   const [finalWinner, setFinalWinner] = useState(null);
   const [showGameEndedModal, setShowGameEndedModal] = useState(false);
+  const [homeScreenRandomWord, setHomeScreenRandomWord] = useState('');
 
   // Hardcoded Firebase Config and AppId
   const hardcodedFirebaseConfig = {
@@ -247,7 +249,7 @@ const App = () => {
   }, [db, currentGameId]); // Dependencies ensure listener updates if DB or game ID changes
 
   // 6. Home Component
-  const Home = () => {
+  const Home = ({ homeScreenRandomWord }) => {
     const { userId, isAuthReady, setCurrentPage } = useFirebase();
     // Static timestamp for compilation time
     const compileTimestamp = "June 18, 2025, 03:25 PM BST"; // Updated timestamp
@@ -260,7 +262,7 @@ const App = () => {
 
     return (
       <div className="flex flex-col items-center justify-center p-6 bg-white rounded-lg shadow-xl m-4 md:w-1/2 lg:w-1/3 mx-auto">
-        <h2 className="text-4xl font-bold text-gray-800 mb-6">Rock, Paper, Scissors Tournament</h2>
+        <h2 className="text-4xl font-bold text-gray-800 mb-6">Rock, Paper, Scissors Tournament {homeScreenRandomWord}</h2>
         <p className="text-lg text-gray-600 mb-8 text-center">Challenge your friends to an epic tournament!</p>
         <button
           onClick={() => {
@@ -316,7 +318,7 @@ const App = () => {
       setCreating(true);
       setErrorMessage('');
       try {
-        const newGameCode = generateGameCode();
+        const newGameCode = generateGameCode(); // Use the global generateGameCode
         const gameRef = doc(db, `artifacts/${currentAppId}/public/data/games`, newGameCode);
 
         const gameSnap = await getDoc(gameRef);
@@ -1354,7 +1356,7 @@ const App = () => {
   return (
     <FirebaseContext.Provider value={{ db, auth, userId, displayName, isAuthReady, setCurrentPage, currentGameId, setCurrentGameId, game, setGame, finalWinner, setFinalWinner, showGameEndedModal, setShowGameEndedModal, isHost: game?.hostId === userId }}>
       <Fragment>
-        {currentPage === 'home' && <Home />}
+        {currentPage === 'home' && <Home homeScreenRandomWord={homeScreenRandomWord} />}
         {currentPage === 'createGame' && <CreateGame />}
         {currentPage === 'joinGame' && <JoinGame />}
         {currentPage === 'gameLobby' && <GameLobby />}
