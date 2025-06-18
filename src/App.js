@@ -3,24 +3,24 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, where, addDoc, deleteDoc, getDocs } from 'firebase/firestore';
 
-// Context for Firebase services and user data
+// 1. Firebase Context for global access to DB, Auth, and user state
 const FirebaseContext = createContext(null);
 
-// Custom hook to use Firebase context
+// Custom hook to consume the Firebase context
 const useFirebase = () => useContext(FirebaseContext);
 
-// Utility to generate a short, unique 5-letter game code
+// 2. Utility Function: Generate a short, unique 5-letter game code
 const generateGameCode = () => {
   let result = '';
   const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   const charactersLength = characters.length;
-  for (let i = 0; i < 5; i++) { // Generate 5 random uppercase letters
+  for (let i = 0; i < 5; i++) {
     result += characters.charAt(Math.floor(Math.random() * charactersLength));
   }
   return result;
 };
 
-// Custom Confirmation Modal Component
+// 3. Reusable UI Component: Confirmation Modal (instead of alert/confirm)
 const ConfirmationModal = ({ show, title, message, onConfirm, onCancel }) => {
   if (!show) return null;
 
@@ -35,7 +35,6 @@ const ConfirmationModal = ({ show, title, message, onConfirm, onCancel }) => {
             className="flex-1 p-3 rounded-md font-semibold transition duration-300 bg-gray-300 hover:bg-gray-400 text-gray-800 shadow-md"
           >
             No, Cancel
-
           </button>
           <button
             onClick={onConfirm}
@@ -49,39 +48,105 @@ const ConfirmationModal = ({ show, title, message, onConfirm, onCancel }) => {
   );
 };
 
+// 4. Reusable UI Component: Player Status Modal
+const PlayerStatusModal = ({ show, onClose, players, matches, currentUserId }) => {
+  if (!show) return null;
 
-// Main App Component
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+      <div className="bg-white p-6 rounded-lg shadow-2xl max-w-md w-full text-center">
+        <h3 className="text-xl font-bold text-gray-800 mb-4">Current Player Status</h3>
+        <ul className="space-y-3 mb-6 text-left">
+          {players.map(player => {
+            const isInActiveMatch = matches.some(match =>
+              match.status === 'active' &&
+              (match.player1.id === player.id || match.player2.id === player.id)
+            );
+            const playerMatch = matches.find(match =>
+                match.status === 'active' &&
+                (match.player1.id === player.id || match.player2.id === player.id)
+            );
+            const playerInMatchData = playerMatch ? (playerMatch.player1.id === player.id ? playerMatch.player1 : playerMatch.player2) : null;
+
+            let statusText = '';
+            let moveStatusText = '';
+
+            if (player.status === 'eliminated') {
+              statusText = 'Eliminated from Tournament';
+            } else if (player.advancedThisRound && !isInActiveMatch) {
+              statusText = 'Received a Bye (Advanced to next round)';
+            } else if (player.status === 'playing' && isInActiveMatch) {
+              statusText = 'In active match';
+              if (playerInMatchData?.pendingMove) {
+                  moveStatusText = 'Move Chosen';
+              } else {
+                  moveStatusText = 'Waiting for Move';
+              }
+            } else if (player.status === 'playing' && !isInActiveMatch) {
+                statusText = 'Waiting for match assignment'; // Should happen if waiting for next round
+            } else {
+                statusText = 'Joined (Lobby)';
+            }
+
+            return (
+              <li key={player.id} className="bg-gray-100 p-3 rounded-md border border-gray-200">
+                <span className="font-semibold text-lg text-gray-900">{player.name} {player.id === currentUserId && '(You)'}</span>
+                <p className="text-sm text-gray-600">Status: <span className="font-medium">{statusText}</span></p>
+                {playerMatch && (
+                  <p className="text-sm text-gray-600">
+                    Match: <span className="font-medium">{playerMatch.player1.name} vs {playerMatch.player2.name}</span>
+                    {moveStatusText && <span className="ml-2 font-medium">({moveStatusText})</span>}
+                  </p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+        <button
+          onClick={onClose}
+          className="w-full p-3 rounded-md font-semibold transition duration-300 bg-indigo-600 hover:bg-indigo-700 text-white shadow-md"
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  );
+};
+
+
+// 5. Main App Component - Orchestrates all other components and Firebase initialization
 const App = () => {
   const [db, setDb] = useState(null);
   const [auth, setAuth] = useState(null);
   const [userId, setUserId] = useState(null);
   const [displayName, setDisplayName] = useState('');
   const [isAuthReady, setIsAuthReady] = useState(false);
-  const [currentPage, setCurrentPage] = useState('home'); // 'home', 'createGame', 'joinGame', 'gameLobby', 'tournament'
+  const [currentPage, setCurrentPage] = useState('home');
   const [currentGameId, setCurrentGameId] = useState(null);
-  const [game, setGame] = useState(null); // Current game data from Firestore
+  const [game, setGame] = useState(null);
+  const [finalWinner, setFinalWinner] = useState(null);
+  const [showGameEndedModal, setShowGameEndedModal] = useState(false);
 
-  // Firebase Initialization and Authentication
+  // Firebase Initialization and Authentication - Runs once on component mount
   useEffect(() => {
     try {
-      // Access global variables provided by the Canvas environment
-      const globalAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
-      const initialAuthToken = typeof window.__initial_auth_token !== 'undefined' ? window.__initial_auth_token : null;
-
+      // Hardcoded Firebase Config as requested
       const firebaseConfig = {
         apiKey: "AIzaSyBni6_iiti4MytyRpfTh95SyC1LhyV9KF0",
         authDomain: "rps-tournament-online.firebaseapp.com",
         projectId: "rps-tournament-online",
         storageBucket: "rps-tournament-online.firebasestorage.app",
         messagingSenderId: "453163680831",
-        appId: globalAppId // Using the globalAppId variable
+        appId: "1:453163680831:web:cb66974cb075122d5fe48a"
       };
 
+      // Essential check to ensure Firebase configuration is valid
       if (!firebaseConfig || Object.keys(firebaseConfig).length === 0 || !firebaseConfig.projectId || !firebaseConfig.apiKey) {
         console.error("Firebase config is missing or empty. Please ensure all Firebase credentials are correct.");
-        return;
+        return; // Prevent initialization with invalid config
       }
 
+      // Initialize Firebase app and get service instances
       const app = initializeApp(firebaseConfig);
       const firestore = getFirestore(app);
       const firebaseAuth = getAuth(app);
@@ -89,46 +154,73 @@ const App = () => {
       setDb(firestore);
       setAuth(firebaseAuth);
 
-      const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
+      // Listen for authentication state changes
+      const unsubscribeAuth = onAuthStateChanged(firebaseAuth, async (user) => {
         if (user) {
           console.log("Firebase Auth State Changed: Logged in as", user.uid);
           setUserId(user.uid);
-          setIsAuthReady(true);
+          setDisplayName(user.displayName || user.uid);
+          setIsAuthReady(true); // Authentication is ready
         } else {
-          console.log("Firebase Auth State Changed: No user, signing in anonymously.");
+          console.log("Firebase Auth State Changed: No user, attempting anonymous sign-in.");
           try {
-            // Use initialAuthToken if available, otherwise sign in anonymously
-            if (initialAuthToken) {
-              await signInWithCustomToken(firebaseAuth, initialAuthToken);
-            } else {
-              await signInAnonymously(firebaseAuth);
-            }
-          } catch (error) {
-            console.error("Error signing in anonymously:", error);
+            // Since config is hardcoded, we default to anonymous sign-in here.
+            // If you need custom token sign-in, you'd need a different mechanism to provide the token.
+            await signInAnonymously(firebaseAuth);
+            console.log("Signed in anonymously.");
+          } catch (authError) {
+            console.error("Error during Firebase anonymous sign-in:", authError);
+            setIsAuthReady(true); // Still set ready even if sign-in failed, so app can proceed (e.g., show error)
           }
         }
       });
 
-      return () => unsubscribe();
+      // Cleanup function for auth listener
+      return () => unsubscribeAuth();
     } catch (error) {
       console.error("Error initializing Firebase:", error);
     }
-  }, []);
+  }, []); // Empty dependency array ensures this runs only once
 
   // Effect to listen to game data when currentGameId changes
   useEffect(() => {
     if (db && currentGameId) {
-      // Access __app_id from the global scope if defined, otherwise use a default or your hardcoded ID
-      const currentAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : "1:453163680831:web:cb66974cb075122d5fe48a"; // Fallback to your provided ID if __app_id isn't in scope
+      // With hardcoded config, appId is directly available
+      const currentAppId = "1:453163680831:web:cb66974cb075122d5fe48a"; // Hardcoded appId
       const gameDocRef = doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId);
-      const unsubscribe = onSnapshot(gameDocRef, (docSnap) => {
+
+      const unsubscribeGame = onSnapshot(gameDocRef, (docSnap) => {
         if (docSnap.exists()) {
-          setGame(docSnap.data());
-          console.log("Current Game Data:", docSnap.data());
+          const latestGameData = docSnap.data();
+          setGame(latestGameData);
+          console.log("Current Game Data:", latestGameData);
+
+          // Tournament winner determination logic
+          if (latestGameData.status === 'playing') {
+            const activePlayers = latestGameData.players.filter(p => p.status === 'playing');
+            if (activePlayers.length === 1 && latestGameData.currentRound > 0) {
+              const potentialWinner = activePlayers[0];
+              if (potentialWinner.advancedThisRound) { // Ensure winner actually advanced from a match
+                setFinalWinner(potentialWinner);
+                setShowGameEndedModal(true);
+                if (latestGameData.status !== 'finished') {
+                  updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), { status: 'finished' });
+                }
+              }
+            } else if (activePlayers.length === 0 && latestGameData.currentRound > 0) {
+              // All players eliminated or left, and no clear winner
+              setFinalWinner(null);
+              setShowGameEndedModal(true);
+              if (latestGameData.status !== 'finished') {
+                updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), { status: 'finished' });
+              }
+            }
+          }
+
           // Automatically navigate based on game state
-          if (docSnap.data().status === 'lobby') {
+          if (latestGameData.status === 'lobby') {
             setCurrentPage('gameLobby');
-          } else if (docSnap.data().status === 'playing' || docSnap.data().status === 'finished') {
+          } else if (latestGameData.status === 'playing' || latestGameData.status === 'finished') {
             setCurrentPage('tournament');
           }
         } else {
@@ -139,7 +231,6 @@ const App = () => {
         }
       }, (error) => {
         console.error("Error listening to game changes:", error);
-        // Handle permission errors, e.g., game deleted
         if (error.code === 'permission-denied') {
           alert("You do not have permission to access this game. It might have been deleted or the game code is incorrect.");
           setCurrentGameId(null);
@@ -148,21 +239,37 @@ const App = () => {
         }
       });
 
-      return () => unsubscribe();
+      // Cleanup function for game listener
+      return () => unsubscribeGame();
     }
-  }, [db, currentGameId]);
+  }, [db, currentGameId]); // Dependencies ensure listener updates if DB or game ID changes
 
-  // Component for the Home page
+  // 6. Home Component
   const Home = () => {
-    // We get userId from the context, which is provided higher up in the App component.
-    const { userId } = useFirebase();
+    const { userId, isAuthReady, setCurrentPage } = useFirebase();
+    // Static timestamp for compilation time
+    const compileTimestamp = "June 18, 2025, 03:25 PM BST"; // Updated timestamp
+
+    useEffect(() => {
+      console.log("Home component rendered.");
+      console.log("Home - isAuthReady:", isAuthReady);
+      console.log("Home - userId:", userId);
+    }, [isAuthReady, userId]);
+
     return (
       <div className="flex flex-col items-center justify-center p-6 bg-white rounded-lg shadow-xl m-4 md:w-1/2 lg:w-1/3 mx-auto">
         <h2 className="text-4xl font-bold text-gray-800 mb-6">Rock, Paper, Scissors Tournament</h2>
         <p className="text-lg text-gray-600 mb-8 text-center">Challenge your friends to an epic tournament!</p>
         <button
-          onClick={() => setCurrentPage('createGame')}
+          onClick={() => {
+            if (!isAuthReady || !userId) {
+              alert("Please wait for authentication to be ready before creating a game.");
+              return;
+            }
+            setCurrentPage('createGame');
+          }}
           className="w-full p-4 mb-4 rounded-md text-xl font-bold transition duration-300 bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg"
+          disabled={!isAuthReady || !userId} // Button disabled until auth is ready and userId exists
         >
           Create New Game
         </button>
@@ -173,19 +280,25 @@ const App = () => {
           Join Existing Game
         </button>
         <p className="mt-6 text-sm text-gray-500">Your Session ID: <span className="font-mono">{userId || 'Loading...'}</span></p>
+        <p className="mt-2 text-xs text-gray-400">Version Compiled: {compileTimestamp}</p>
       </div>
     );
   };
 
-
-  // Component to handle creating a new game
+  // 7. CreateGame Component
   const CreateGame = () => {
-    // Destructure necessary values from the Firebase context
     const { db, userId, isAuthReady, setDisplayName, setCurrentGameId, setCurrentPage } = useFirebase();
     const [name, setName] = useState('');
     const [creating, setCreating] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
-    const currentAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
+    // With hardcoded config, appId is directly available
+    const currentAppId = "1:453163680831:web:cb66974cb075122d5fe48a"; // Hardcoded appId
+
+    useEffect(() => {
+      console.log("CreateGame component rendered.");
+      console.log("CreateGame - isAuthReady:", isAuthReady);
+      console.log("CreateGame - userId:", userId);
+    }, [isAuthReady, userId]);
 
     const handleCreateGame = async () => {
       if (!name.trim()) {
@@ -193,7 +306,8 @@ const App = () => {
         return;
       }
       if (!isAuthReady || !userId) {
-        setErrorMessage('Authentication not ready. Please wait.');
+        setErrorMessage('Authentication not ready or user ID missing. Please wait, or ensure Firebase Anonymous Auth is enabled.');
+        console.error('CreateGame failed: Authentication not ready. isAuthReady:', isAuthReady, 'userId:', userId);
         return;
       }
 
@@ -203,32 +317,29 @@ const App = () => {
         const newGameCode = generateGameCode();
         const gameRef = doc(db, `artifacts/${currentAppId}/public/data/games`, newGameCode);
 
-        // Check if game code already exists (unlikely but possible)
         const gameSnap = await getDoc(gameRef);
         if (gameSnap.exists()) {
-          // If it exists, try again or generate a new code. For now, just log and return.
           console.warn("Generated duplicate game code, trying again.");
           setErrorMessage("Failed to create game, please try again.");
-          setCreating(false);
           return;
         }
 
         const initialGameData = {
           hostId: userId,
           players: [{ id: userId, name: name.trim(), status: 'joined', wins: 0, losses: 0, advancedThisRound: false }],
-          currentRound: 0, // 0 for lobby, 1 for first round of play
-          status: 'lobby', // 'lobby', 'playing', 'finished'
+          currentRound: 0,
+          status: 'lobby',
           createdAt: Date.now(),
         };
 
         await setDoc(gameRef, initialGameData);
         setCurrentGameId(newGameCode);
         setCurrentPage('gameLobby');
-        setDisplayName(name.trim()); // Set display name globally
+        setDisplayName(name.trim());
         console.log(`Game created with code: ${newGameCode}`);
       } catch (error) {
         console.error("Error creating game:", error);
-        setErrorMessage("Failed to create game. Please try again.");
+        setErrorMessage("Failed to create game. Please try again. Error: " + error.message);
       } finally {
         setCreating(false);
       }
@@ -246,9 +357,9 @@ const App = () => {
         />
         <button
           onClick={handleCreateGame}
-          disabled={creating || !isAuthReady}
+          disabled={creating || !isAuthReady || !userId}
           className={`w-full p-3 rounded-md text-lg font-semibold transition duration-300 ${
-            creating || !isAuthReady ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-md'
+            creating || !isAuthReady || !userId ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-md'
           }`}
         >
           {creating ? 'Creating...' : 'Create Game'}
@@ -264,16 +375,15 @@ const App = () => {
     );
   };
 
-  // Component to handle joining an existing game
+  // 8. JoinGame Component
   const JoinGame = () => {
-    // Destructure necessary values from the Firebase context
     const { db, userId, isAuthReady, setDisplayName, setCurrentGameId, setCurrentPage } = useFirebase();
     const [code, setCode] = useState('');
     const [name, setName] = useState('');
     const [joining, setJoining] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
-    const currentAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
-
+    // With hardcoded config, appId is directly available
+    const currentAppId = "1:453163680831:web:cb66974cb075122d5fe48a"; // Hardcoded appId
 
     const handleJoinGame = async () => {
       if (!name.trim()) {
@@ -301,11 +411,9 @@ const App = () => {
         }
 
         const gameData = gameSnap.data();
-        // Check if player already exists in the game
         const playerExists = gameData.players.some(player => player.id === userId);
 
         if (!playerExists) {
-          // Check if game is full (max 2 players for simplicity in RPS matches)
           if (gameData.players.length >= 2) {
             setErrorMessage('Game is full. Cannot join.');
             return;
@@ -313,7 +421,6 @@ const App = () => {
           const updatedPlayers = [...gameData.players, { id: userId, name: name.trim(), status: 'joined', wins: 0, losses: 0, advancedThisRound: false }];
           await updateDoc(gameDocRef, { players: updatedPlayers });
         } else {
-          // If player exists but name might be different, update it
           const updatedPlayers = gameData.players.map(player =>
             player.id === userId ? { ...player, name: name.trim() } : player
           );
@@ -322,7 +429,7 @@ const App = () => {
 
         setCurrentGameId(code.trim().toUpperCase());
         setCurrentPage('gameLobby');
-        setDisplayName(name.trim()); // Set display name globally
+        setDisplayName(name.trim());
         console.log(`Joined game: ${code.trim().toUpperCase()}`);
       } catch (error) {
         console.error("Error joining game:", error);
@@ -348,13 +455,13 @@ const App = () => {
           value={code}
           onChange={(e) => setCode(e.target.value.toUpperCase())}
           className="w-full p-3 mb-4 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          maxLength="5" // Changed max length to 5
+          maxLength="5"
         />
         <button
           onClick={handleJoinGame}
-          disabled={joining || !isAuthReady}
+          disabled={joining || !isAuthReady || !userId}
           className={`w-full p-3 rounded-md text-lg font-semibold transition duration-300 ${
-            joining || !isAuthReady ? 'bg-green-300 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 text-white shadow-md'
+            joining || !isAuthReady || !userId ? 'bg-green-300 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 text-white shadow-md'
           }`}
         >
           {joining ? 'Joining...' : 'Join Game'}
@@ -370,15 +477,14 @@ const App = () => {
     );
   };
 
-  // Component for the game lobby
+  // 9. GameLobby Component
   const GameLobby = () => {
-    // Destructure necessary values from the Firebase context
     const { db, userId, game, currentGameId, setCurrentPage } = useFirebase();
     const [message, setMessage] = useState('');
-    const [showConfirmationModal, setShowConfirmationModal] = useState(false); // New state for modal
+    const [showConfirmationModal, setShowConfirmationModal] = useState(false);
     const isHost = game && game.hostId === userId;
-    const currentAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
-
+    // With hardcoded config, appId is directly available
+    const currentAppId = "1:453163680831:web:cb66974cb075122d5fe48a"; // Hardcoded appId
 
     const handleStartGame = async () => {
       if (!game || !db || !currentGameId) return;
@@ -388,23 +494,18 @@ const App = () => {
         setMessage('Need at least 2 players to start the game.');
         return;
       }
-      // Removed the odd number check for players for simplicity,
-      // as the next round logic now handles 'bye' players.
-      // A message is shown if it's an odd number.
 
       setMessage('Starting game...');
       try {
-        // Shuffle players for fair initial pairing
         const shuffledPlayers = [...activePlayers].sort(() => 0.5 - Math.random());
         const initialMatches = [];
         const nextRoundPlayers = shuffledPlayers.map(p => ({ ...p, advancedThisRound: false, wins: 0, losses: 0, status: 'playing' }));
 
-        // Handle bye: if odd number, one player gets a bye
         let byePlayer = null;
         if (nextRoundPlayers.length % 2 !== 0) {
-          byePlayer = nextRoundPlayers.pop(); // Take one player out for a bye
+          byePlayer = nextRoundPlayers.pop();
           if (byePlayer) {
-            byePlayer.advancedThisRound = true; // Bye player automatically advances
+            byePlayer.advancedThisRound = true;
             console.log(`${byePlayer.name} gets a bye this round.`);
           }
         }
@@ -413,18 +514,17 @@ const App = () => {
           const player1 = nextRoundPlayers[i];
           const player2 = nextRoundPlayers[i + 1];
 
-          // Create a new match document in a subcollection
           const matchRef = doc(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
           const newMatchData = {
             id: matchRef.id,
             round: 1,
-            player1: { id: player1.id, name: player1.name, score: 0, move: null, pendingMove: null, lastMoveTime: null }, // Added pendingMove
-            player2: { id: player2.id, name: player2.name, score: 0, move: null, pendingMove: null, lastMoveTime: null }, // Added pendingMove
-            status: 'active', // 'active', 'finished'
+            player1: { id: player1.id, name: player1.name, score: 0, move: null, pendingMove: null, lastMoveTime: null },
+            player2: { id: player2.id, name: player2.name, score: 0, move: null, pendingMove: null, lastMoveTime: null },
+            status: 'active',
             winnerId: null,
             loserId: null,
-            gamesPlayed: 0, // Number of individual RPS games played within this match
-            gameHistory: [], // Initialize gameHistory for this match
+            gamesPlayed: 0,
+            gameHistory: [],
           };
           await setDoc(matchRef, newMatchData);
           initialMatches.push(matchRef.id);
@@ -435,8 +535,8 @@ const App = () => {
         await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), {
           status: 'playing',
           currentRound: 1,
-          matches: initialMatches, // Store match IDs for the current round
-          players: finalPlayersForRound1, // Reset scores and status for players
+          matches: initialMatches,
+          players: finalPlayersForRound1,
         });
         setMessage('');
         console.log("Game started! Initial matches created.");
@@ -447,38 +547,31 @@ const App = () => {
       }
     };
 
-    // Function called when the user initiates leaving the game (button click)
     const handleLeaveGameInitiate = () => {
       if (isHost) {
-        setShowConfirmationModal(true); // Show modal for host confirmation
+        setShowConfirmationModal(true);
       } else {
-        // Non-host players can leave directly
         handleLeaveGameConfirm();
       }
     };
 
-    // Function called after host confirms leaving via modal
     const handleLeaveGameConfirm = async () => {
-      setShowConfirmationModal(false); // Hide the modal
+      setShowConfirmationModal(false);
 
       if (!db || !currentGameId || !userId || !game) {
         setMessage("Error: Cannot leave game. Missing data.");
         return;
       }
-      const currentAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
+      const currentAppId = "1:453163680831:web:cb66974cb075122d5fe48a"; // Hardcoded appId
 
       try {
         if (isHost) {
-          // Delete all matches in the subcollection first
           const matchesSnapshot = await getDocs(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
           const deletePromises = matchesSnapshot.docs.map(d => deleteDoc(d.ref));
           await Promise.all(deletePromises);
-
-          // Then delete the game document
           await deleteDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId));
           console.log("Game deleted by host.");
         } else {
-          // If a player leaves, update the player list
           const updatedPlayers = game.players.filter(player => player.id !== userId);
           await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), { players: updatedPlayers });
           console.log("Left the game.");
@@ -505,7 +598,6 @@ const App = () => {
         <h2 className="text-3xl font-bold text-gray-800 mb-4">Game Lobby</h2>
         <p className="text-xl text-gray-600 mb-6">Game Code: <span className="font-extrabold text-indigo-600 text-4xl">{currentGameId}</span></p>
         <p className="text-lg text-gray-700 mb-4">Your ID: <span className="text-sm font-mono text-gray-500">{userId}</span></p>
-
 
         <div className="w-full max-w-md bg-gray-50 p-4 rounded-md shadow-inner mb-6">
           <h3 className="text-2xl font-semibold text-gray-700 mb-3">Players Joined:</h3>
@@ -544,7 +636,6 @@ const App = () => {
           {isHost ? 'Delete Game & Go Home' : 'Leave Game'}
         </button>
 
-        {/* Confirmation Modal */}
         <ConfirmationModal
           show={showConfirmationModal}
           title="Confirm Game Deletion"
@@ -556,130 +647,61 @@ const App = () => {
     );
   };
 
-  // Component for the actual tournament play
+  // 10. TournamentGame Component
   const TournamentGame = () => {
-    // Destructure necessary values from the Firebase context
-    const { db, userId, game, currentGameId, displayName, setCurrentGameId, setGame, setCurrentPage } = useFirebase();
+    const { db, userId, game, currentGameId, displayName, setCurrentGameId, setGame, setCurrentPage, finalWinner, setFinalWinner, showGameEndedModal, setShowGameEndedModal } = useFirebase();
     const [matches, setMatches] = useState([]);
-    const [currentMatchId, setCurrentMatchId] = useState(null); // The ID of the match this user is currently in
+    const [currentMatchId, setCurrentMatchId] = useState(null);
     const [message, setMessage] = useState('');
-    const [gameResultMessage, setGameResultMessage] = useState(''); // New state for temporary game result message
-    const [showGameEndedModal, setShowGameEndedModal] = useState(false);
-    const [finalWinner, setFinalWinner] = useState(null);
+    const [gameResultMessage, setGameResultMessage] = useState('');
     const [showResetConfirmation, setShowResetConfirmation] = useState(false);
     const [showEndGameConfirmation, setShowEndGameConfirmation] = useState(false);
+    const [showPlayerStatusModal, setShowPlayerStatusModal] = useState(false);
 
-    const currentAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
-
+    const currentAppId = "1:453163680831:web:cb66974cb075122d5fe48a"; // Hardcoded appId
     const currentPlayer = game?.players.find(p => p.id === userId);
     const isHost = game?.hostId === userId;
 
-    // Listen to all matches in the current game
+    // Listen to all matches in the current game's subcollection
     useEffect(() => {
       if (db && currentGameId && game?.status === 'playing') {
         const matchesColRef = collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`);
         const q = query(matchesColRef);
 
-        const unsubscribe = onSnapshot(q, (snapshot) => {
+        const unsubscribeMatches = onSnapshot(q, (snapshot) => {
           const updatedMatches = snapshot.docs.map(doc => doc.data());
           setMatches(updatedMatches);
 
-          // Determine the user's current match
+          // Find the current user's active match
           const userMatch = updatedMatches.find(match =>
             match.status === 'active' &&
             (match.player1.id === userId || match.player2.id === userId)
           );
-          if (userMatch) {
-            setCurrentMatchId(userMatch.id);
-          } else {
-            setCurrentMatchId(null); // User is not in an active match
-          }
-
-          // Check if tournament has a winner
-          if (game.status === 'playing') { // Only check if still playing
-            const activePlayers = game.players.filter(p => p.status === 'playing');
-            if (activePlayers.length === 1 && game.currentRound > 0) {
-              setFinalWinner(activePlayers[0]);
-              setShowGameEndedModal(true);
-              // Update game status to 'finished' in Firestore if it's not already
-              if (game.status !== 'finished') {
-                updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), { status: 'finished' });
-              }
-            } else if (activePlayers.length === 0 && game.currentRound > 0 && !finalWinner) { // Only set no winner if no winner was previously found
-              // All players eliminated, but no single winner (e.g., all left)
-              setFinalWinner(null); // No specific winner
-              setShowGameEndedModal(true);
-              if (game.status !== 'finished') {
-                 updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), { status: 'finished' });
-              }
-            }
-          }
-
+          setCurrentMatchId(userMatch ? userMatch.id : null);
         }, (error) => {
           console.error("Error listening to matches:", error);
         });
 
-        return () => unsubscribe();
+        return () => unsubscribeMatches(); // Cleanup listener
       }
-    }, [db, currentGameId, game?.status, game?.players, finalWinner]); // Depend on finalWinner to react to game ending
+    }, [db, currentGameId, game?.status, userId]);
 
-    const handleMakeMove = async (move) => {
-      if (!currentMatchId || !db || !userId) return;
-
-      setMessage('');
-      const matchDocRef = doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId);
-      const matchSnap = await getDoc(matchDocRef);
-
-      if (!matchSnap.exists()) {
-        setMessage('Error: Match not found.');
-        return;
-      }
-
-      const matchData = matchSnap.data();
-      const isPlayer1 = matchData.player1.id === userId;
-
-      let updateData = {};
-      if (isPlayer1) {
-        if (matchData.player1.pendingMove) { // Check pendingMove
-          setMessage("You've already made your move for this game.");
-          return;
-        }
-        updateData = { 'player1.pendingMove': move, 'player1.lastMoveTime': Date.now() }; // Update pendingMove
-      } else {
-        if (matchData.player2.pendingMove) { // Check pendingMove
-          setMessage("You've already made your move for this game.");
-          return;
-        }
-        updateData = { 'player2.pendingMove': move, 'player2.lastMoveTime': Date.now() }; // Update pendingMove
-      }
-
-      try {
-        await updateDoc(matchDocRef, updateData);
-        setMessage('Move submitted! Waiting for opponent...');
-      } catch (error) {
-        console.error("Error making move:", error);
-        setMessage('Failed to submit move.');
-      }
-    };
-
-    // Effect to check match results when a match updates
+    // Effect to resolve and display match results when moves are made
     useEffect(() => {
       if (db && currentGameId && currentMatchId) {
-        const unsubscribe = onSnapshot(doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId), async (matchSnap) => {
+        const unsubscribeMatchResult = onSnapshot(doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId), async (matchSnap) => {
           if (!matchSnap.exists()) return;
 
           const matchData = matchSnap.data();
-          // Check if both players have submitted their PENDING moves
           if (matchData.player1.pendingMove && matchData.player2.pendingMove && matchData.status === 'active') {
-            const p1Move = matchData.player1.pendingMove; // Use pendingMove for resolution
-            const p2Move = matchData.player2.pendingMove; // Use pendingMove for resolution
-            let winnerOfGameId = null; // Winner of this single RPS game
+            const p1Move = matchData.player1.pendingMove;
+            const p2Move = matchData.player2.pendingMove;
+            let winnerOfGameId = null;
             let gameOutcomeMessage = "";
             let p1Score = matchData.player1.score;
             let p2Score = matchData.player2.score;
             let currentGamesPlayed = matchData.gamesPlayed + 1;
 
-            // Determine winner of the individual RPS game
             if (p1Move === p2Move) {
               gameOutcomeMessage = "It's a tie!";
             } else if (
@@ -696,11 +718,9 @@ const App = () => {
               gameOutcomeMessage = `${matchData.player2.name} won!`;
             }
 
-            // Set a local state for the game result message for temporary display
             setGameResultMessage(gameOutcomeMessage);
-            setMessage(''); // Clear any previous general message
+            setMessage('');
 
-            // Create game result record for history
             const gameResult = {
               gameNum: currentGamesPlayed,
               player1: { name: matchData.player1.name, move: p1Move },
@@ -709,61 +729,50 @@ const App = () => {
             };
             const newGameHistory = [...(matchData.gameHistory || []), gameResult];
 
-            // Update match with revealed moves and scores, but keep pending moves until timeout clears them
-            // This allows the moves to be visually shown for a moment
-            const updatesAfterReveal = {
-              'player1.score': p1Score,
-              'player2.score': p2Score,
-              'player1.move': p1Move, // Reveal this move
-              'player2.move': p2Move, // Reveal this move
-              gamesPlayed: currentGamesPlayed,
-              gameHistory: newGameHistory,
-            };
-
-            // Check if match winner (first to 3 games)
             let matchWinnerId = null;
             let matchLoserId = null;
             let matchStatus = 'active';
 
-            if (p1Score >= 3) {
+            if (p1Score >= 3) { // First to 3 games wins the match
               matchWinnerId = matchData.player1.id;
               matchLoserId = matchData.player2.id;
               matchStatus = 'finished';
-              // Overwrite gameOutcomeMessage for the match end scenario if it's the final point
               setGameResultMessage(`${matchData.player1.name} wins the match! Advancing...`);
             } else if (p2Score >= 3) {
               matchWinnerId = matchData.player2.id;
               matchLoserId = matchData.player1.id;
               matchStatus = 'finished';
-              // Overwrite gameOutcomeMessage for the match end scenario if it's the final point
               setGameResultMessage(`${matchData.player2.name} wins the match! Advancing...`);
             }
 
-            updatesAfterReveal.status = matchStatus;
-            updatesAfterReveal.winnerId = matchWinnerId;
-            updatesAfterReveal.loserId = matchLoserId;
+            await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId), {
+              'player1.score': p1Score,
+              'player2.score': p2Score,
+              'player1.move': p1Move,
+              'player2.move': p2Move,
+              gamesPlayed: currentGamesPlayed,
+              gameHistory: newGameHistory,
+              status: matchStatus,
+              winnerId: matchWinnerId,
+              loserId: matchLoserId,
+            });
 
-            await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId), updatesAfterReveal);
-
-            // Timeout to clear moves and pending moves after display
+            // Clear moves and pending moves after a short delay for display
             setTimeout(async () => {
-              const resetUpdates = {
-                'player1.move': null,
-                'player2.move': null,
-                'player1.pendingMove': null, // Clear pending move
-                'player2.pendingMove': null, // Clear pending move
-                'player1.lastMoveTime': null,
-                'player2.lastMoveTime': null,
-              };
-              // Only update these fields if the match is still active.
-              // If the match finished, we don't want to clear the winner/loser info.
-              if (matchStatus === 'active') {
-                await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId), resetUpdates);
+              if (matchStatus === 'active') { // Only reset if match is still active
+                await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId), {
+                  'player1.move': null,
+                  'player2.move': null,
+                  'player1.pendingMove': null,
+                  'player2.pendingMove': null,
+                  'player1.lastMoveTime': null,
+                  'player2.lastMoveTime': null,
+                });
               }
-              setGameResultMessage(''); // Clear the displayed game result message
-            }, 1500); // Display for 1.5 seconds
+              setGameResultMessage('');
+            }, 1500);
 
-            // If a match finishes, update player status in the main game document
+            // Update main game document with player status if match finished
             if (matchStatus === 'finished' && matchWinnerId && matchLoserId) {
               const gameDocRef = doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId);
               const gameSnap = await getDoc(gameDocRef);
@@ -781,55 +790,85 @@ const App = () => {
             }
           }
         });
-        return () => unsubscribe();
+        return () => unsubscribeMatchResult();
       }
     }, [db, currentGameId, currentMatchId, userId]);
 
+    // Function to handle player making a move (rock, paper, or scissors)
+    const handleMakeMove = async (move) => {
+      if (!currentMatchId || !db || !userId) return;
+
+      setMessage('');
+      const matchDocRef = doc(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`, currentMatchId);
+      const matchSnap = await getDoc(matchDocRef);
+
+      if (!matchSnap.exists()) {
+        setMessage('Error: Match not found.');
+        return;
+      }
+
+      const matchData = matchSnap.data();
+      const isPlayer1 = matchData.player1.id === userId;
+
+      let updateData = {};
+      if (isPlayer1) {
+        if (matchData.player1.pendingMove) {
+          setMessage("You've already made your move for this game.");
+          return;
+        }
+        updateData = { 'player1.pendingMove': move, 'player1.lastMoveTime': Date.now() };
+      } else {
+        if (matchData.player2.pendingMove) {
+          setMessage("You've already made your move for this game.");
+          return;
+        }
+        updateData = { 'player2.pendingMove': move, 'player2.lastMoveTime': Date.now() };
+      }
+
+      try {
+        await updateDoc(matchDocRef, updateData);
+        setMessage('Move submitted! Waiting for opponent...');
+      } catch (error) {
+        console.error("Error making move:", error);
+        setMessage('Failed to submit move.');
+      }
+    };
 
     // Host-specific logic to advance to the next round
     const handleNextRound = async () => {
       if (!isHost || !db || !currentGameId || !game) return;
 
       const currentRound = game.currentRound;
-      const playersInCurrentRound = game.players.filter(p => p.status === 'playing' && p.advancedThisRound);
+      const playersWhoAdvanced = game.players.filter(p => p.status === 'playing' && p.advancedThisRound);
 
-      if (playersInCurrentRound.length < 1) { // If everyone eliminated or no one advanced
-        setMessage("No players advanced, or all players eliminated. Game might be over or needs more players.");
-        return;
+      if (playersWhoAdvanced.length < 1) {
+          setMessage("No players advanced from the previous round. Game might be stuck or over.");
+          return;
       }
-      if (playersInCurrentRound.length === 1) {
-        setMessage(`Tournament Winner: ${playersInCurrentRound[0].name}!`);
-        setFinalWinner(playersInCurrentRound[0]);
-        setShowGameEndedModal(true);
-        await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), {
-          status: 'finished',
-        });
-        return;
+      if (playersWhoAdvanced.length === 1) {
+          setMessage(`Tournament Winner: ${playersWhoAdvanced[0].name}!`);
+          setFinalWinner(playersWhoAdvanced[0]);
+          setShowGameEndedModal(true);
+          await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), { status: 'finished' });
+          return;
       }
-      // Removed the odd number check for players for simplicity,
-      // as the next round logic now handles 'bye' players.
-      // A message is shown if it's an odd number.
-
 
       setMessage(`Starting Round ${currentRound + 1}...`);
       try {
-        // Clear previous round's matches
         const prevMatchesSnapshot = await getDocs(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
         const deletePromises = prevMatchesSnapshot.docs.map(d => deleteDoc(d.ref));
         await Promise.all(deletePromises);
         console.log("Previous round matches cleared.");
 
-        // Shuffle players for fair pairing
-        const shuffledPlayers = [...playersInCurrentRound].sort(() => 0.5 - Math.random());
+        const shuffledPlayers = [...playersWhoAdvanced].sort(() => 0.5 - Math.random());
         const nextRoundMatches = [];
-        const playersForNextRoundUpdate = shuffledPlayers.map(p => ({ ...p, advancedThisRound: false })); // Reset advanced status
+        const playersForNextRoundUpdate = shuffledPlayers.map(p => ({ ...p, advancedThisRound: false }));
 
-        // Handle bye: if odd number, one player gets a bye
         let byePlayer = null;
         if (playersForNextRoundUpdate.length % 2 !== 0) {
-          byePlayer = playersForNextRoundUpdate.pop(); // Take one player out for a bye
+          byePlayer = playersForNextRoundUpdate.pop();
           if (byePlayer) {
-            byePlayer.advancedThisRound = true; // Bye player automatically advances
+            byePlayer.advancedThisRound = true;
             console.log(`${byePlayer.name} gets a bye this round.`);
           }
         }
@@ -842,13 +881,13 @@ const App = () => {
           const newMatchData = {
             id: matchRef.id,
             round: currentRound + 1,
-            player1: { id: player1.id, name: player1.name, score: 0, move: null, pendingMove: null, lastMoveTime: null }, // Added pendingMove
-            player2: { id: player2.id, name: player2.name, score: 0, move: null, pendingMove: null, lastMoveTime: null }, // Added pendingMove
+            player1: { id: player1.id, name: player1.name, score: 0, move: null, pendingMove: null, lastMoveTime: null },
+            player2: { id: player2.id, name: player2.name, score: 0, move: null, pendingMove: null, lastMoveTime: null },
             status: 'active',
             winnerId: null,
             loserId: null,
             gamesPlayed: 0,
-            gameHistory: [], // Initialize gameHistory for new matches
+            gameHistory: [],
           };
           await setDoc(matchRef, newMatchData);
           nextRoundMatches.push(matchRef.id);
@@ -859,7 +898,7 @@ const App = () => {
         await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), {
           currentRound: currentRound + 1,
           matches: nextRoundMatches,
-          players: finalPlayersForNextRound, // Update players list for next round
+          players: finalPlayersForNextRound,
         });
 
         setMessage('');
@@ -870,7 +909,6 @@ const App = () => {
       }
     };
 
-
     const currentMatch = matches.find(m => m.id === currentMatchId);
     const opponent = currentMatch
       ? (currentMatch.player1.id === userId ? currentMatch.player2 : currentMatch.player1)
@@ -879,62 +917,44 @@ const App = () => {
       ? (currentMatch.player1.id === userId ? currentMatch.player1 : currentMatch.player2)
       : null;
 
-    // --- Start Debugging Logs for TournamentGame Render ---
-    console.log("--- TournamentGame Render Debug ---");
-    console.log("Current Match:", currentMatch);
-    console.log("Self (current user's perspective):", self);
-    console.log("Opponent (current user's perspective):", opponent);
-    // --- End Debugging Logs for TournamentGame Render ---
-
-    const allMatchesFinished = game?.matches?.every(matchId => {
-      const match = matches.find(m => m.id === matchId);
-      return match && match.status === 'finished';
-    });
-
-    const playersInTournament = game?.players.filter(p => p.status === 'playing' || p.status === 'eliminated').length || 0;
+    const allCurrentRoundMatchesAreFinished = game?.matches?.every(matchId => {
+        const match = matches.find(m => m.id === matchId);
+        return match && match.status === 'finished';
+    }) || false;
     const playersRemaining = game?.players.filter(p => p.status === 'playing').length || 0;
 
-
-    // Filter players to show for scoreboard in current round
     const scoreboardPlayers = game?.players
-      .filter(p => p.status === 'playing' || p.status === 'eliminated' || p.status === 'joined') // Include 'joined' for initial lobby players
+      .filter(p => p.status === 'playing' || p.status === 'eliminated' || p.status === 'joined')
       .sort((a, b) => {
-        // Sort by 'playing' first, then 'eliminated', then by wins (desc)
         if (a.status === 'playing' && b.status !== 'playing') return -1;
         if (a.status !== 'playing' && b.status === 'playing') return 1;
         return (b.wins || 0) - (a.wins || 0);
       });
 
-    // Determine if choice buttons should be disabled
     const disableChoiceButtons = self?.pendingMove !== null || currentMatch?.status !== 'active' || game?.status !== 'playing' || gameResultMessage !== '';
 
-
-    // Handle initiation of going back to lobby (host only)
     const handleBackToLobbyInitiate = () => {
       if (isHost) {
         setShowResetConfirmation(true);
       } else {
-        // Non-host just navigates back
         handleBackToLobbyConfirm();
       }
     };
 
     const handleBackToLobbyConfirm = async () => {
-      setShowResetConfirmation(false); // Hide modal
+      setShowResetConfirmation(false);
 
       if (!db || !currentGameId || !userId || !game) {
         setMessage("Error: Cannot reset game. Missing data.");
         return;
       }
-      const currentAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
+      const currentAppId = "1:453163680831:web:cb66974cb075122d5fe48a"; // Hardcoded appId
 
       try {
-        // Delete all matches in the subcollection first
         const matchesSnapshot = await getDocs(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
         const deletePromises = matchesSnapshot.docs.map(d => deleteDoc(d.ref));
         await Promise.all(deletePromises);
 
-        // Reset game status and player states in main game document
         await updateDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId), {
           status: 'lobby',
           currentRound: 0,
@@ -942,7 +962,6 @@ const App = () => {
           players: game.players.map(p => ({ ...p, status: 'joined', wins: 0, losses: 0, advancedThisRound: false })),
         });
         console.log("Game reset to lobby state by host.");
-
         setCurrentPage('gameLobby');
       } catch (error) {
         console.error("Error going back to lobby:", error);
@@ -957,21 +976,18 @@ const App = () => {
     };
 
     const handleEndGameConfirm = async () => {
-      setShowEndGameConfirmation(false); // Hide modal
+      setShowEndGameConfirmation(false);
 
       if (!db || !currentGameId || !game) {
         setMessage("Error: Cannot end game. Missing data.");
         return;
       }
-      const currentAppId = typeof window.__app_id !== 'undefined' ? window.__app_id : "1:453163680831:web:cb66974cb075122d5fe48a";
+      const currentAppId = "1:453163680831:web:cb66974cb075122d5fe48a"; // Hardcoded appId
 
       try {
-        // Delete all matches in the subcollection first
         const matchesSnapshot = await getDocs(collection(db, `artifacts/${currentAppId}/public/data/games/${currentGameId}/matches`));
         const deletePromises = matchesSnapshot.docs.map(d => deleteDoc(d.ref));
         await Promise.all(deletePromises);
-
-        // Delete the game document itself
         await deleteDoc(doc(db, `artifacts/${currentAppId}/public/data/games`, currentGameId));
         console.log("Game deleted after ending.");
         setCurrentGameId(null);
@@ -982,7 +998,6 @@ const App = () => {
         setMessage("Failed to end game.");
       }
     };
-
 
     if (!game) {
       return (
@@ -1047,7 +1062,7 @@ const App = () => {
                 <button
                   key={move}
                   onClick={() => handleMakeMove(move)}
-                  disabled={disableChoiceButtons} // Use the new disable state
+                  disabled={disableChoiceButtons}
                   className={`p-4 rounded-full text-4xl shadow-md transition duration-300 transform hover:scale-110
                     ${self.pendingMove === move ? 'bg-yellow-400' : 'bg-white text-indigo-700 hover:bg-gray-200'}
                     ${disableChoiceButtons ? 'opacity-50 cursor-not-allowed' : ''}
@@ -1069,7 +1084,6 @@ const App = () => {
 
             {!gameResultMessage && (
               <>
-                {/* Display logic for current player's move */}
                 {self.pendingMove ? (
                   <p className="text-center mt-4 text-xl font-semibold">You chose: <span className="capitalize">{self.pendingMove}</span> (Waiting for opponent)</p>
                 ) : self.move ? (
@@ -1078,18 +1092,16 @@ const App = () => {
                   <p className="text-center mt-4 text-xl font-semibold">Make your move!</p>
                 )}
 
-                {/* Display logic for opponent's move - improved to hide choice */}
-                {opponent.move && self.move ? ( /* Both moves revealed, show opponent's move */
+                {opponent.move && self.move ? (
                   <p className="text-center mt-2 text-xl font-semibold">{opponent.name} played: <span className="capitalize">{opponent.move}</span> (Revealed)</p>
-                ) : opponent.pendingMove ? ( /* Opponent has a pending move (meaning they chose), but we haven't revealed yet */
+                ) : opponent.pendingMove ? (
                   <p className="text-center mt-2 text-xl font-semibold">{opponent.name} has chosen! Waiting for reveal...</p>
-                ) : ( /* Opponent has not made a move yet */
+                ) : (
                   <p className="text-center mt-2 text-xl font-semibold">Waiting for {opponent.name} to choose...</p>
                 )}
               </>
             )}
 
-            {/* Display individual game history for the current match */}
             {currentMatch.gameHistory && currentMatch.gameHistory.length > 0 && (
               <div className="mt-6 bg-purple-700 p-4 rounded-lg shadow-md">
                 <h4 className="text-xl font-semibold mb-3 text-white">Individual Game Results:</h4>
@@ -1105,7 +1117,6 @@ const App = () => {
                 </ul>
               </div>
             )}
-
           </div>
         ) : (
           <div className="bg-gray-100 p-6 rounded-xl shadow-inner w-full max-w-md mb-6">
@@ -1147,7 +1158,7 @@ const App = () => {
           </ul>
         </div>
 
-        {isHost && allMatchesFinished && playersRemaining > 1 && game.status === 'playing' && (
+        {isHost && allCurrentRoundMatchesAreFinished && playersRemaining > 1 && game.status === 'playing' && (
           <button
             onClick={handleNextRound}
             className="w-full max-w-xs p-4 rounded-md text-xl font-bold transition duration-300 bg-blue-600 hover:bg-blue-700 text-white shadow-lg mt-6"
@@ -1176,7 +1187,13 @@ const App = () => {
           {isHost ? 'Reset Game to Lobby' : 'Back to Lobby'}
         </button>
 
-        {/* Confirmation Modals for TournamentGame */}
+        <button
+          onClick={() => setShowPlayerStatusModal(true)}
+          className="mt-4 p-3 rounded-md text-md font-semibold transition duration-300 bg-purple-600 hover:bg-purple-700 text-white shadow-md"
+        >
+          Show Player Status
+        </button>
+
         <ConfirmationModal
           show={showResetConfirmation}
           title="Confirm Game Reset"
@@ -1191,21 +1208,28 @@ const App = () => {
           onConfirm={handleEndGameConfirm}
           onCancel={() => setShowEndGameConfirmation(false)}
         />
+        <PlayerStatusModal
+          show={showPlayerStatusModal}
+          onClose={() => setShowPlayerStatusModal(false)}
+          players={game.players}
+          matches={matches}
+          currentUserId={userId}
+        />
       </div>
     );
   };
 
-
   // Main render logic for App component
-  // Provide all necessary state and setters via FirebaseContext
+  // Provides all necessary state and setters via FirebaseContext to children
   return (
     <FirebaseContext.Provider value={{
       db, auth, userId, setUserId, displayName, setDisplayName,
-      isAuthReady, currentPage, setCurrentPage, currentGameId, setCurrentGameId, game, setGame
+      isAuthReady, currentPage, setCurrentPage, currentGameId, setCurrentGameId, game, setGame,
+      finalWinner, setFinalWinner, showGameEndedModal, setShowGameEndedModal
     }}>
       <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
         {
-          (() => {
+          (() => { // Conditional rendering based on currentPage state
             switch (currentPage) {
               case 'home':
                 return <Home />;
