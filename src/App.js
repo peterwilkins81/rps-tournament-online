@@ -411,8 +411,8 @@ const App = () => {
           const newMatchData = {
             id: matchRef.id,
             round: 1,
-            player1: { id: player1.id, name: player1.name, score: 0, move: null, lastMoveTime: null },
-            player2: { id: player2.id, name: player2.name, score: 0, move: null, lastMoveTime: null },
+            player1: { id: player1.id, name: player1.name, score: 0, move: null, pendingMove: null, lastMoveTime: null }, // Added pendingMove
+            player2: { id: player2.id, name: player2.name, score: 0, move: null, pendingMove: null, lastMoveTime: null }, // Added pendingMove
             status: 'active', // 'active', 'finished'
             winnerId: null,
             loserId: null,
@@ -631,17 +631,17 @@ const App = () => {
 
       let updateData = {};
       if (isPlayer1) {
-        if (matchData.player1.move) {
+        if (matchData.player1.pendingMove) { // Check pendingMove
           setMessage("You've already made your move for this game.");
           return;
         }
-        updateData = { 'player1.move': move, 'player1.lastMoveTime': Date.now() };
+        updateData = { 'player1.pendingMove': move, 'player1.lastMoveTime': Date.now() }; // Update pendingMove
       } else {
-        if (matchData.player2.move) {
+        if (matchData.player2.pendingMove) { // Check pendingMove
           setMessage("You've already made your move for this game.");
           return;
         }
-        updateData = { 'player2.move': move, 'player2.lastMoveTime': Date.now() };
+        updateData = { 'player2.pendingMove': move, 'player2.lastMoveTime': Date.now() }; // Update pendingMove
       }
 
       try {
@@ -660,9 +660,10 @@ const App = () => {
           if (!matchSnap.exists()) return;
 
           const matchData = matchSnap.data();
-          if (matchData.player1.move && matchData.player2.move && matchData.status === 'active') {
-            const p1Move = matchData.player1.move;
-            const p2Move = matchData.player2.move;
+          // Check if both players have submitted their PENDING moves
+          if (matchData.player1.pendingMove && matchData.player2.pendingMove && matchData.status === 'active') {
+            const p1Move = matchData.player1.pendingMove; // Use pendingMove for resolution
+            const p2Move = matchData.player2.pendingMove; // Use pendingMove for resolution
             let winnerOfGame = null; // Winner of this single RPS game
             let p1Score = matchData.player1.score;
             let p2Score = matchData.player2.score;
@@ -684,13 +685,15 @@ const App = () => {
               setMessage(`${matchData.player2.name} wins this game!`);
             }
 
-            // Update scores and reset moves for the next individual game
+            // Update scores and REVEAL moves, then reset pending moves for the next individual game
             const updates = {
               'player1.score': p1Score,
               'player2.score': p2Score,
-              'player1.move': null, // Reset moves for next game
-              'player2.move': null,
-              'player1.lastMoveTime': null,
+              'player1.move': p1Move, // Reveal the move
+              'player2.move': p2Move, // Reveal the move
+              'player1.pendingMove': null, // Clear pending move
+              'player2.pendingMove': null, // Clear pending move
+              'player1.lastMoveTime': null, // Clear last move time after reveal
               'player2.lastMoveTime': null,
               gamesPlayed: currentGamesPlayed,
             };
@@ -797,8 +800,8 @@ const App = () => {
           const newMatchData = {
             id: matchRef.id,
             round: currentRound + 1,
-            player1: { id: player1.id, name: player1.name, score: 0, move: null, lastMoveTime: null },
-            player2: { id: player2.id, name: player2.name, score: 0, move: null, lastMoveTime: null },
+            player1: { id: player1.id, name: player1.name, score: 0, move: null, pendingMove: null, lastMoveTime: null }, // Added pendingMove
+            player2: { id: player2.id, name: player2.name, score: 0, move: null, pendingMove: null, lastMoveTime: null }, // Added pendingMove
             status: 'active',
             winnerId: null,
             loserId: null,
@@ -990,10 +993,10 @@ const App = () => {
                 <button
                   key={move}
                   onClick={() => handleMakeMove(move)}
-                  disabled={self.move !== null || currentMatch.status !== 'active' || game.status !== 'playing'}
+                  disabled={self.pendingMove !== null || currentMatch.status !== 'active' || game.status !== 'playing'} // Disable if already made a pending move
                   className={`p-4 rounded-full text-4xl shadow-md transition duration-300 transform hover:scale-110
-                    ${self.move === move ? 'bg-yellow-400' : 'bg-white text-indigo-700 hover:bg-gray-200'}
-                    ${self.move !== null || currentMatch.status !== 'active' || game.status !== 'playing' ? 'opacity-50 cursor-not-allowed' : ''}
+                    ${self.pendingMove === move ? 'bg-yellow-400' : 'bg-white text-indigo-700 hover:bg-gray-200'}
+                    ${self.pendingMove !== null || currentMatch.status !== 'active' || game.status !== 'playing' ? 'opacity-50 cursor-not-allowed' : ''}
                   `}
                   title={`Play ${move}`}
                 >
@@ -1003,15 +1006,23 @@ const App = () => {
                 </button>
               ))}
             </div>
-            {self.move && <p className="text-center mt-4 text-xl font-semibold">You played: <span className="capitalize">{self.move}</span></p>}
-            {opponent.move && <p className="text-center mt-2 text-xl font-semibold">Opponent played: <span className="capitalize">{opponent.move}</span></p>}
-            {/* Display "Waiting for opponent" or "Opponent chose!" based on opponent.move */}
-            {!opponent.move && self.move && (
-              <p className="text-center text-yellow-200 mt-2 text-lg">Waiting for {opponent.name} to choose...</p>
+            {/* Display logic based on pendingMove and revealed move */}
+            {self.pendingMove ? (
+              <p className="text-center mt-4 text-xl font-semibold">You played: <span className="capitalize">{self.pendingMove}</span> (Waiting for opponent)</p>
+            ) : self.move ? (
+              <p className="text-center mt-4 text-xl font-semibold">You played: <span className="capitalize">{self.move}</span> (Revealed)</p>
+            ) : (
+              <p className="text-center mt-4 text-xl font-semibold">Make your move!</p>
             )}
-            {opponent.move && !self.move && (
-              <p className="text-center text-yellow-200 mt-2 text-lg">{opponent.name} has chosen! Make your move.</p>
+
+            {opponent.pendingMove ? (
+              <p className="text-center mt-2 text-xl font-semibold">{opponent.name} has chosen! (Waiting for reveal)</p>
+            ) : opponent.move ? (
+              <p className="text-center mt-2 text-xl font-semibold">{opponent.name} played: <span className="capitalize">{opponent.move}</span> (Revealed)</p>
+            ) : (
+              <p className="text-center mt-2 text-xl font-semibold">Waiting for {opponent.name} to choose...</p>
             )}
+
           </div>
         ) : (
           <div className="bg-gray-100 p-6 rounded-xl shadow-inner w-full max-w-md mb-6">
