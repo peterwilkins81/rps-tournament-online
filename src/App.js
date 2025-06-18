@@ -1,7 +1,7 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, where, addDoc, deleteDoc, getDocs } from 'firebase/firestore';
+import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, serverTimestamp } from 'firebase/firestore';
 
 // Context for Firebase services and user data
 const FirebaseContext = createContext(null);
@@ -1091,7 +1091,7 @@ const App = () => {
               {['rock', 'paper', 'scissors'].map((move) => (
                 <button
                   key={move}
-                  onClick={() => handleMakeMove(move)}
+                  onClick={() => handlemakemove(move)}
                   disabled={self.move !== null || currentMatch.status !== 'active' || game.status !== 'playing'}
                   className={`p-4 rounded-full text-4xl shadow-md transition duration-300 transform hover:scale-110
                     ${self.move === move ? 'bg-yellow-400' : 'bg-white text-indigo-700 hover:bg-gray-200'}
