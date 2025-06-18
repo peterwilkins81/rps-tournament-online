@@ -29,6 +29,7 @@ const ConfirmationModal = ({ show, title, message, onConfirm, onCancel }) => {
             className="flex-1 p-3 rounded-md font-semibold transition duration-300 bg-gray-300 hover:bg-gray-400 text-gray-800 shadow-md"
           >
             No, Cancel
+
           </button>
           <button
             onClick={onConfirm}
@@ -417,6 +418,7 @@ const App = () => {
             winnerId: null,
             loserId: null,
             gamesPlayed: 0, // Number of individual RPS games played within this match
+            gameHistory: [], // Initialize gameHistory for this match
           };
           await setDoc(matchRef, newMatchData);
           initialMatches.push(matchRef.id);
@@ -669,6 +671,7 @@ const App = () => {
             let p2Score = matchData.player2.score;
             let currentGamesPlayed = matchData.gamesPlayed + 1;
 
+            // Determine winner of the individual RPS game
             if (p1Move === p2Move) {
               setMessage("It's a tie! Play again.");
             } else if (
@@ -685,6 +688,16 @@ const App = () => {
               setMessage(`${matchData.player2.name} wins this game!`);
             }
 
+            // Create game result record for history
+            const gameResult = {
+              gameNum: currentGamesPlayed,
+              player1: { name: matchData.player1.name, move: p1Move },
+              player2: { name: matchData.player2.name, move: p2Move },
+              winner: winnerOfGame ? (matchData.player1.id === winnerOfGame ? matchData.player1.name : matchData.player2.name) : 'Tie'
+            };
+
+            const newGameHistory = [...(matchData.gameHistory || []), gameResult];
+
             // Update scores and REVEAL moves, then reset pending moves for the next individual game
             const updates = {
               'player1.score': p1Score,
@@ -696,6 +709,7 @@ const App = () => {
               'player1.lastMoveTime': null, // Clear last move time after reveal
               'player2.lastMoveTime': null,
               gamesPlayed: currentGamesPlayed,
+              gameHistory: newGameHistory, // Update game history
             };
 
             // Check if match winner (first to 3 games)
@@ -806,6 +820,7 @@ const App = () => {
             winnerId: null,
             loserId: null,
             gamesPlayed: 0,
+            gameHistory: [], // Initialize gameHistory for new matches
           };
           await setDoc(matchRef, newMatchData);
           nextRoundMatches.push(matchRef.id);
@@ -1029,6 +1044,23 @@ const App = () => {
               <p className="text-center mt-2 text-xl font-semibold">{opponent.name} has chosen! Waiting for reveal...</p>
             ) : ( /* Opponent has not made a move yet */
               <p className="text-center mt-2 text-xl font-semibold">Waiting for {opponent.name} to choose...</p>
+            )}
+
+            {/* Display individual game history for the current match */}
+            {currentMatch.gameHistory && currentMatch.gameHistory.length > 0 && (
+              <div className="mt-6 bg-purple-700 p-4 rounded-lg shadow-md">
+                <h4 className="text-xl font-semibold mb-3 text-white">Individual Game Results:</h4>
+                <ul className="space-y-2">
+                  {currentMatch.gameHistory.map((gameRec, index) => (
+                    <li key={index} className="flex flex-col items-start bg-purple-800 p-3 rounded-md text-sm text-gray-100">
+                      <span className="font-bold">Game {gameRec.gameNum}:</span>
+                      <span>{gameRec.player1.name} played {gameRec.player1.move}</span>
+                      <span>{gameRec.player2.name} played {gameRec.player2.move}</span>
+                      <span className="font-semibold mt-1">Winner: {gameRec.winner}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
 
           </div>
