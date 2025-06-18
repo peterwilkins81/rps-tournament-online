@@ -12,7 +12,7 @@ const App = () => {
   const [db, setDb] = useState(null);
   const [auth, setAuth] = useState(null);
   const [userId, setUserId] = useState(null);
-  const [displayName, setDisplayName] = useState('');
+  const [displayName, setDisplayName] = useState(''); // This state will now be updated
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [appId, setAppId] = useState(null); // Stores the Firebase App ID
 
@@ -266,11 +266,15 @@ const App = () => {
   };
 
   // Handles creating a new game
-  const createGame = async (gameName, rounds) => {
-    if (!db || !userId || !displayName || !appId) {
-      console.error("Firebase DB, User ID, Display Name, or App ID not available.");
+  // Now accepts 'name' as a parameter to set displayName in App's state
+  const createGame = async (gameName, rounds, name) => {
+    if (!db || !userId || !appId) { // Removed !displayName from this check, as it's passed here
+      console.error("Firebase DB, User ID, or App ID not available.");
       return;
     }
+    // Set the global displayName state BEFORE creating the game
+    setDisplayName(name);
+
     const gameCode = generateGameCode();
     const newGameRef = doc(db, `artifacts/${appId}/public/data/games`, gameCode);
 
@@ -281,7 +285,7 @@ const App = () => {
         currentRound: 1,
         status: 'waiting', // waiting, started, ended
         players: {
-          [userId]: { name: displayName, score: 0, host: true, choice: null, pendingChoice: null }
+          [userId]: { name: name, score: 0, host: true, choice: null, pendingChoice: null }
         },
         scores: {
           [userId]: 0
@@ -300,22 +304,32 @@ const App = () => {
   };
 
   // Handles joining an existing game
-  const joinGame = async (gameCode) => {
-    if (!db || !userId || !displayName || !appId) {
-      console.error("Firebase DB, User ID, Display Name, or App ID not available.");
+  // Now accepts 'name' as a parameter to set displayName in App's state
+  const joinGame = async (gameCode, name) => {
+    if (!db || !userId || !appId) { // Removed !displayName from this check
+      console.error("Firebase DB, User ID, or App ID not available.");
       return;
     }
+    // Set the global displayName state BEFORE joining the game
+    setDisplayName(name);
+
     const gameDocRef = doc(db, `artifacts/${appId}/public/data/games`, gameCode);
 
     try {
       const docSnap = await getDoc(gameDocRef);
       if (docSnap.exists()) {
         const gameData = docSnap.data();
-        if (Object.keys(gameData.players).length < 2 && !gameData.players[userId]) {
+        // Check if game is full (for two players)
+        if (Object.keys(gameData.players).length >= 2 && !gameData.players[userId]) {
+            alert("Game is full! Maximum 2 players allowed.");
+            return;
+        }
+
+        if (!gameData.players[userId]) {
           // Add player to existing game
           const updatedPlayers = {
             ...gameData.players,
-            [userId]: { name: displayName, score: 0, host: false, choice: null, pendingChoice: null }
+            [userId]: { name: name, score: 0, host: false, choice: null, pendingChoice: null }
           };
           const updatedScores = {
             ...gameData.scores,
@@ -330,13 +344,17 @@ const App = () => {
           setCurrentGameId(gameCode);
           setCurrentPage('lobby');
           console.log("Joined game:", gameCode);
-        } else if (gameData.players[userId]) {
-          // Player is already in the game
+        } else {
+          // Player is already in the game, update their name if it changed
+          const updatedPlayers = { ...gameData.players };
+          updatedPlayers[userId] = { ...updatedPlayers[userId], name: name };
+          await updateDoc(gameDocRef, {
+            players: updatedPlayers,
+            lastUpdated: serverTimestamp(),
+          });
           setCurrentGameId(gameCode);
           setCurrentPage('lobby'); // Or direct to game if started
-          console.log("Already in game:", gameCode);
-        } else {
-          alert("Game is full!");
+          console.log("Already in game, name updated:", gameCode);
         }
       } else {
         alert("Game not found!");
@@ -346,6 +364,7 @@ const App = () => {
       alert("Failed to join game: " + error.message);
     }
   };
+
 
   // Handles starting the game (only host can do this)
   const handleStartGame = async () => {
@@ -374,6 +393,7 @@ const App = () => {
         currentRound: 1, // Ensure starting at round 1 if not already
         history: [], // Clear history for a fresh start
         scores: {}, // Clear scores for a fresh start
+        winner: null, // Clear previous winner
         lastUpdated: serverTimestamp(),
       });
       console.log("Game started with choices reset!");
@@ -523,11 +543,16 @@ const App = () => {
   const CreateGame = ({ onCreateGame, onBack }) => {
     const [gameName, setGameName] = useState('');
     const [rounds, setRounds] = useState(3);
+    const [name, setName] = useState(''); // Local state for user's name
 
     const handleSubmit = (e) => {
       e.preventDefault();
+      if (!name.trim()) {
+        alert("Please enter your name.");
+        return;
+      }
       if (gameName.trim() && rounds > 0) {
-        onCreateGame(gameName, rounds);
+        onCreateGame(gameName, rounds, name.trim()); // Pass name to onCreateGame
       } else {
         alert("Please enter a game name and a valid number of rounds.");
       }
@@ -538,6 +563,17 @@ const App = () => {
         <div className="bg-gray-800 p-8 rounded-lg shadow-lg max-w-md w-full">
           <h2 className="text-3xl font-bold mb-6 text-center text-blue-400">Create New Game</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label htmlFor="playerName" className="block text-lg font-medium text-gray-300 mb-2">Your Name:</label>
+              <input
+                type="text"
+                id="playerName"
+                className="w-full p-3 rounded-lg bg-gray-700 text-white border border-gray-600 focus:ring-blue-500 focus:border-blue-500"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+              />
+            </div>
             <div>
               <label htmlFor="gameName" className="block text-lg font-medium text-gray-300 mb-2">Game Name:</label>
               <input
@@ -585,11 +621,16 @@ const App = () => {
   // Join Game Component
   const JoinGame = ({ onJoinGame, onBack }) => {
     const [gameCode, setGameCode] = useState('');
+    const [name, setName] = useState(''); // Local state for user's name
 
     const handleSubmit = (e) => {
       e.preventDefault();
+      if (!name.trim()) {
+        alert("Please enter your name.");
+        return;
+      }
       if (gameCode.trim()) {
-        onJoinGame(gameCode.toUpperCase()); // Ensure code is uppercase
+        onJoinGame(gameCode.toUpperCase(), name.trim()); // Pass name to onJoinGame
       } else {
         alert("Please enter a game code.");
       }
@@ -600,6 +641,17 @@ const App = () => {
         <div className="bg-gray-800 p-8 rounded-lg shadow-lg max-w-md w-full">
           <h2 className="text-3xl font-bold mb-6 text-center text-green-400">Join Existing Game</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label htmlFor="playerName" className="block text-lg font-medium text-gray-300 mb-2">Your Name:</label>
+              <input
+                type="text"
+                id="playerName"
+                className="w-full p-3 rounded-lg bg-gray-700 text-white border border-gray-600 focus:ring-green-500 focus:border-green-500"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+              />
+            </div>
             <div>
               <label htmlFor="gameCode" className="block text-lg font-medium text-gray-300 mb-2">Game Code:</label>
               <input
@@ -873,6 +925,7 @@ const App = () => {
           <CreateGame
             onCreateGame={createGame}
             onBack={() => setCurrentPage('home')}
+            setDisplayName={setDisplayName} // Pass setDisplayName down
           />
         )}
 
@@ -880,6 +933,7 @@ const App = () => {
           <JoinGame
             onJoinGame={joinGame}
             onBack={() => setCurrentPage('home')}
+            setDisplayName={setDisplayName} // Pass setDisplayName down
           />
         )}
 
